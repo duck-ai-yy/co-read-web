@@ -123,18 +123,25 @@ resetThreads();
 // ────────────────────── DOM 引用 ──────────────────────
 const $ = (id) => document.getElementById(id);
 const els = {
+  home: $("home"),
   landing: $("landing"),
   topicPage: $("topicPage"),
   reader: $("reader"),
-  // v3-β topic list (landing)
+  // 首页（粘贴链接直接读）
+  homeLoadForm: $("homeLoadForm"),
+  homeUrlInput: $("homeUrlInput"),
+  homeFileInput: $("homeFileInput"),
+  homeRecent: $("homeRecent"),
+  homeManageBtn: $("homeManageBtn"),
+  // 主题列表（从首页"我的主题"进入）
   topicGrid: $("topicGrid"),
   newTopicBtn: $("newTopicBtn"),
   landingStatus: $("landingStatus"),
+  topicListBack: $("topicListBack"),
   // v3-β topic page
   topicBack: $("topicBack"),
   tpName: $("tpName"),
   tpPaletteRow: $("tpPaletteRow"),
-  tpPaletteToggle: $("tpPaletteToggle"),
   tpLoadForm: $("tpLoadForm"),
   tpUrlInput: $("tpUrlInput"),
   tpFileInput: $("tpFileInput"),
@@ -155,11 +162,8 @@ const els = {
   ntmPrev: $("ntmPrev"),
   ntmNext: $("ntmNext"),
   ntmConfirm: $("ntmConfirm"),
-  // v3-β topic card "..." menu + palette viewer
+  // v3-β topic card "..." menu
   topicCardMenu: $("topicCardMenu"),
-  paletteViewer: $("paletteViewer"),
-  pvClose: $("pvClose"),
-  pvBody: $("pvBody"),
   // v3-δ 导出笔记
   tpExportBtn: $("tpExportBtn"),
   // reader
@@ -599,29 +603,40 @@ function renderFindDropdown(query) {
   dd.hidden = false;
 }
 
-// 点 dropdown 结果 → 跳页 + 保留 scrollLeft（复用 cite-link / 缩略图同款双 rAF）
+// pdf.js find / scrollPageIntoView 跳到匹配时只对齐垂直、会顺手重置水平 scrollLeft。
+// 鸭鸭要求：搜索跳转时左右滚动条不动。find 的滚动是异步的（搜索算完才滚），
+// 单次 rAF 赶不上 → 连续钉若干帧把 scrollLeft 锁回原值（~330ms 覆盖异步滚动）。
+function withPreservedScrollLeft(trigger) {
+  const prev = els.viewerContainer.scrollLeft;
+  trigger();
+  let frame = 0;
+  const pin = () => {
+    els.viewerContainer.scrollLeft = prev;
+    if (++frame < 20) requestAnimationFrame(pin);
+  };
+  requestAnimationFrame(pin);
+}
+
+// 点 dropdown 结果 → 跳页（跳转 + 页内高亮全程锁定水平 scrollLeft）
 function jumpToFindResult(pageNum) {
   if (!pageNum || !state.pdf) return;
   if (pageNum < 1 || pageNum > state.totalPages) {
     console.debug("[find-result] page out of range:", pageNum);
     return;
   }
-  // scrollLeft 保留：pdf.js scrollPageIntoView 只管垂直对齐、会重置水平位置
-  const prevScrollLeft = els.viewerContainer.scrollLeft;
-  try {
-    pdfViewer.scrollPageIntoView({ pageNumber: pageNum });
-  } catch (err) {
-    console.debug("[find-result] scrollPageIntoView failed:", err);
-    return;
-  }
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      els.viewerContainer.scrollLeft = prevScrollLeft;
-    });
-  });
-  // 收起下拉 + 让 pdf.js 在该页黄色高亮这个词（沿用现有 findController 流程）
   hideFindDropdown();
-  dispatchFind("");
+  withPreservedScrollLeft(() => {
+    try {
+      pdfViewer.scrollPageIntoView({ pageNumber: pageNum });
+    } catch (err) {
+      console.debug("[find-result] scrollPageIntoView failed:", err);
+      return;
+    }
+    // 让 pdf.js 在该页高亮这个词（沿用现有 findController 流程）
+    dispatchFind("");
+  });
+  // 点结果项 = 用户主动确认这个查询 → 之后按 Enter 走"找下一个"
+  _findDispatchedQuery = els.findInput.value.trim();
 }
 
 // ────────────────────── v2-a 划线高亮 ──────────────────────
@@ -1504,12 +1519,9 @@ async function createAnnotation(color) {
   appendAnnotationRects(ann);
   // saveAnnotations 是 IDB 异步写（put）；不会阻塞主线程，保留原 fire-and-forget
   saveAnnotations(state.pdfKey, state.annotations).catch((e) => console.warn("[save]", e));
-  // v2-b：创建对应 thread + 自动切到这个 thread
-  // v3-polish-2 #5：自动切 thread **不滚动** —— 保留用户刚画线的视角
-  //                只有显式切（点击 thread-list / hl-bubble "引用"）才滚到 anchorPage
+  // 划线 = 标记/记录：先不开对话、不切 thread（不打断用户当前的对话上下文）。
+  // 只把引用挂到输入框上方 —— 用户真发消息时（sendMessage）才实质化这条高亮的 thread。
   ensureAnnotationThread(ann);
-  switchThread(ann.id, { autoScroll: false });
-  // 创建即引用：渲染独立 chip 到 chatInput 上方（不再污染 textarea）
   quoteAnnotationToChat(ann);
 }
 
@@ -1740,6 +1752,15 @@ function showHlBubble(annId, anchorRect) {
 //   - 不同 thread 各自独立的对话上下文（同一 PDF 共享 system + pdf_text 大前缀 → caching 命中率仍很高）
 async function sendMessage(userText) {
   if (state.streaming) return;
+  // 若输入框带着某条高亮的引用 → 这条消息归属那条高亮的 thread。
+  // 划线 / 点引用时都不切 thread；真正发消息这一刻才实质化高亮 thread（"用了才算对话"）。
+  if (state.pendingQuote) {
+    const qAnn = state.annotations.find((a) => a.id === state.pendingQuote.annId);
+    if (qAnn && state.currentThreadId !== qAnn.id) {
+      ensureAnnotationThread(qAnn);
+      switchThread(qAnn.id, { autoScroll: false });
+    }
+  }
   const thread = getCurrentThread();
   const pageTag = `[CURRENT_PAGE: ${state.currentPage}]\n`;
   // v3-polish-2 #3：pendingQuote chip → 拼到 user message 头部
@@ -2062,13 +2083,62 @@ function flashPage(pageNumber) {
 // newTopic 是叠加 modal，不占 view 槽位
 // 切 view 时统一负责：清错误提示 / 收 thread list / 收 palette viewer / 设 state.view
 function _hideAllViews() {
+  els.home.classList.remove("active");
   els.landing.classList.remove("active");
   els.topicPage.classList.remove("active");
   els.reader.classList.remove("active");
 }
+// 首页：粘贴链接直接读 —— 极简入口，主题管理后置
+function switchToHome() {
+  _hideAllViews();
+  hideTopicCardMenu();
+  els.home.classList.add("active");
+  state.view = "home";
+  renderHomeRecent();
+}
+
+// 渲染首页"最近在读" —— 跨所有主题收集 url 类型 PDF
+// （file 类型本地 PDF 无法重开、需重选文件 → 不进列表，见 openPdfFromTopic）
+function renderHomeRecent() {
+  const box = els.homeRecent;
+  box.replaceChildren();
+  const items = [];
+  for (const tid of Object.keys(state.topics)) {
+    const t = state.topics[tid];
+    if (!t) continue;
+    for (const k of (t.pdfKeys || [])) {
+      if (k.startsWith("url:")) items.push({ pdfKey: k, topicId: tid, topicName: t.name });
+    }
+  }
+  if (items.length === 0) return;   // 没读过 → 不渲染（首页保持干净）
+  items.reverse();                  // pdfKeys 按 push 顺序 → 倒序近似"最近"
+  const recent = items.slice(0, 8);
+  const head = document.createElement("div");
+  head.className = "home-recent-head";
+  head.textContent = "最近在读";
+  box.appendChild(head);
+  const list = document.createElement("div");
+  list.className = "home-recent-list";
+  for (const it of recent) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "home-recent-item";
+    card.dataset.pdfKey = it.pdfKey;
+    card.dataset.topicId = it.topicId;
+    const name = document.createElement("span");
+    name.className = "hr-name";
+    name.textContent = deriveTitleFromPdfKey(it.pdfKey);
+    const topic = document.createElement("span");
+    topic.className = "hr-topic";
+    topic.textContent = it.topicName;
+    card.append(name, topic);
+    list.appendChild(card);
+  }
+  box.appendChild(list);
+}
+
 function switchToTopicList() {
   _hideAllViews();
-  hidePaletteViewer();
   hideTopicCardMenu();
   els.landing.classList.add("active");
   state.view = "topicList";
@@ -2079,7 +2149,6 @@ function switchToTopicPage(topicId) {
   // 切前先 abort 任何流式（用户从 reader 回到 topic page 时）
   if (state.abortCtl) state.abortCtl.abort();
   _hideAllViews();
-  hidePaletteViewer();
   hideTopicCardMenu();
   els.topicPage.classList.add("active");
   state.view = "topicPage";
@@ -2096,7 +2165,6 @@ function switchToTopicPage(topicId) {
 }
 function switchToReader() {
   _hideAllViews();
-  hidePaletteViewer();
   hideTopicCardMenu();
   els.reader.classList.add("active");
   state.view = "reader";
@@ -2177,7 +2245,9 @@ function setStreaming(on) {
 
 function updateThreadSummary() {
   const cur = getCurrentThread();
-  const n = Object.keys(state.threads).length;
+  // 计数口径与 thread 列表一致：只算 main + 聊过的高亮
+  const n = Object.keys(state.threads)
+    .filter((id) => id === "main" || state.threads[id].messages.length > 0).length;
   // v3-polish #7：用 displayThreadLabel（customName 优先）
   els.threadSummary.textContent = `⊳ ${n} 个对话 · 当前：${displayThreadLabel(cur)}`;
   els.threadSummary.title = `点击切换对话（共 ${n} 个）`;
@@ -2189,11 +2259,15 @@ function updateThreadSummary() {
 // v3-polish #7：每个 thread 旁加"✎"重命名按钮（行内编辑）；main / annotation thread 都允许改名
 function renderThreadList() {
   els.threadList.replaceChildren();
-  const ids = Object.keys(state.threads).sort((a, b) => {
-    if (a === "main") return -1;
-    if (b === "main") return 1;
-    return state.threads[a].createdAt - state.threads[b].createdAt;
-  });
+  // 只列「main」+「真正聊过的高亮」（messages 非空）。
+  // 纯标记高亮安静待在 PDF 上、进导出笔记，但不占对话列表（"用了才算对话"）。
+  const ids = Object.keys(state.threads)
+    .filter((id) => id === "main" || state.threads[id].messages.length > 0)
+    .sort((a, b) => {
+      if (a === "main") return -1;
+      if (b === "main") return 1;
+      return state.threads[a].createdAt - state.threads[b].createdAt;
+    });
   for (const id of ids) {
     const t = state.threads[id];
     // 用 div 包装（之前是 <button>，要在里面再放 button 会嵌套违法）
@@ -2466,14 +2540,11 @@ function renderTopicPage(topic) {
   els.tpName.textContent = topic.name;
   // palette 行（只读小标签）
   els.tpPaletteRow.replaceChildren();
+  // emoji 自带颜色，不再额外画色块（与 emoji 重复）
   for (const p of (topic.palette || [])) {
     const tag = document.createElement("span");
     tag.className = "tp-tag";
-    const sw = document.createElement("span");
-    sw.className = "tp-tag-swatch";
-    sw.style.background = p.color;
-    tag.appendChild(sw);
-    tag.append(` ${p.emoji} ${p.label}`);
+    tag.textContent = `${p.emoji} ${p.label}`;
     tag.title = "主题创建后色板不可修改";
     els.tpPaletteRow.appendChild(tag);
   }
@@ -2571,32 +2642,6 @@ function openPdfFromTopic(topicId, pdfKey) {
   } else {
     setTpStatus(`未知 PDF key 格式: ${pdfKey}`, true);
   }
-}
-
-// ── 色板查看面板（主题页只读，强调"已冻结"）──
-function showPaletteViewer(topic) {
-  els.pvBody.replaceChildren();
-  for (const p of (topic.palette || [])) {
-    const row = document.createElement("div");
-    row.className = "pv-row";
-    const sw = document.createElement("span");
-    sw.className = "pv-swatch";
-    sw.style.background = p.color;
-    const em = document.createElement("span");
-    em.className = "pv-emoji";
-    em.textContent = p.emoji;
-    const lb = document.createElement("span");
-    lb.className = "pv-label";
-    lb.textContent = p.label;
-    row.appendChild(sw);
-    row.appendChild(em);
-    row.appendChild(lb);
-    els.pvBody.appendChild(row);
-  }
-  els.paletteViewer.hidden = false;
-}
-function hidePaletteViewer() {
-  els.paletteViewer.hidden = true;
 }
 
 // ── reader 顶栏 topic hint 更新 ──
@@ -2939,12 +2984,9 @@ async function generateMarkdownExport(topicId) {
         lines.push(`> "${quote}"`);
         lines.push("");
       }
-      // 对应 thread.messages
+      // 对话（聊过才有）；纯标记高亮只保留上面的引用原文，不写"（无对话）"
       const t = threadRecs.find((x) => x.id === ann.id);
-      if (!t || !t.messages || t.messages.length === 0) {
-        lines.push("_（无对话）_");
-        lines.push("");
-      } else {
+      if (t && t.messages && t.messages.length > 0) {
         for (const m of t.messages) {
           const role = m.role === "user" ? "**你**" : "**Agent**";
           const content = m.role === "user" ? _stripPageTag(m.content) : (m.content || "");
@@ -3174,6 +3216,25 @@ async function ntmDoCreate() {
 
 // ────────────────────── 事件绑定 ──────────────────────
 // v3-β: 主题页 "添加论文" 表单——把 URL / 文件加到当前主题
+// 首页：粘贴链接 / 选本地 PDF → 直接进 reader，论文归入默认主题
+els.homeLoadForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const url = els.homeUrlInput.value.trim();
+  if (!url) return;
+  els.homeUrlInput.value = "";
+  await loadPdf({ url, topicId: DEFAULT_TOPIC_ID });
+});
+els.homeFileInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (file) await loadPdf({ file, topicId: DEFAULT_TOPIC_ID });
+});
+els.homeManageBtn.addEventListener("click", () => switchToTopicList());
+els.homeRecent.addEventListener("click", (e) => {
+  const card = e.target.closest(".home-recent-item");
+  if (card) openPdfFromTopic(card.dataset.topicId, card.dataset.pdfKey);
+});
+
 els.tpLoadForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const url = els.tpUrlInput.value.trim();
@@ -3391,9 +3452,21 @@ document.addEventListener("mousedown", (e) => {
   closeZoomMenu();
 });
 
+// v5-fix（Bug 1 抖动）：打字时 **只** 做 dropdown 预览，绝不碰 PDF 页面。
+//   旧路径在 input 实时事件里 dispatchFind("") → pdf.js find → 自动 scroll 到匹配，
+//   用户每打一个字就滚一次 = 整页乱抖。
+//   正确语义（鸭鸭"还没回车前先出现下拉框预览"）：
+//     - input 阶段：纯 grep dropdown 预览，不 dispatch pdf.js find / 不高亮 / 不滚动
+//     - 只有 Enter / 点 dropdown 结果 时，才 dispatchFind → 页内高亮 + 跳转
+//   _findDispatchedQuery 记录"已经 dispatch 给 pdf.js find 的 query"，
+//   用于判断 Enter 是首次新查询（dispatchFind）还是同查询找下一个（findAgain）。
+let _findDispatchedQuery = null;
 els.findInput.addEventListener("input", () => {
-  // 页内黄色高亮 + n/m 计数：实时跟随（保留现有行为）
-  dispatchFind("");
+  // 打字阶段查询变了 → pdf.js 那边的搜索状态已经过时。
+  // 若之前对某个 query dispatch 过 pdf.js find，页内还留着它的淡色高亮——query 一变
+  // 这些高亮就过时了，必须清掉（否则删空/改写搜索框后旧高亮永久残留）。
+  if (_findDispatchedQuery !== null) clearFindHighlights();
+  _findDispatchedQuery = null;
   // v5：实时下拉预览 —— debounce 250ms，避免快速打字每键都搜 pdfText
   if (_findDebounceTimer) clearTimeout(_findDebounceTimer);
   const query = els.findInput.value.trim();
@@ -3403,9 +3476,19 @@ els.findInput.addEventListener("input", () => {
 els.findInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
-    findAgain(e.shiftKey);
+    const query = els.findInput.value.trim();
+    if (!query) return;   // 空 query 回车 → 什么都不做（不崩）
+    if (query === _findDispatchedQuery) {
+      // 同一个查询再次回车 → 找下一个 / 上一个匹配（锁定水平 scrollLeft）
+      withPreservedScrollLeft(() => findAgain(e.shiftKey));
+    } else {
+      // 首次对这个 query 回车 → 新查询：dispatch pdf.js find（页内高亮 + 跳第一个匹配）
+      _findDispatchedQuery = query;
+      withPreservedScrollLeft(() => dispatchFind(""));
+    }
   } else if (e.key === "Escape") {
     e.preventDefault();
+    _findDispatchedQuery = null;
     closeFindBar();
   }
 });
@@ -3602,12 +3685,12 @@ els.hlBubble.addEventListener("click", (e) => {
   hideHlBubble();
   if (!ann) return;
   if (btn.dataset.action === "quote") {
-    // v2-b：点"引用"= 切到该 ann 的 thread 并写入引用块
-    //   设计决策：单击高亮不切 thread（只浮气泡，不打扰阅读）；
-    //   只有显式点"↪ 引用"才切，符合"动作=意图"原则
-    // 这是显式切（用户意图）→ autoScroll 默认 true，滚到 anchorPage + 居中 hl-rect
+    // 点"↪ 引用"= 把这条高亮挂到输入框引用区。
+    //   聊过的高亮 → 切回它的 thread，方便接着看历史 / 继续聊；
+    //   没聊过的高亮 → 不切 thread，引用带到当前对话里，发消息时才实质化（见 sendMessage）。
     ensureAnnotationThread(ann);
-    switchThread(ann.id);
+    const qt = state.threads[ann.id];
+    if (qt && qt.messages.length > 0) switchThread(ann.id);
     quoteAnnotationToChat(ann);
   } else if (btn.dataset.action === "delete") {
     deleteAnnotation(annId);
@@ -3649,14 +3732,8 @@ els.newTopicBtn.addEventListener("click", openNewTopicModal);
 // 主题页 "←" 返回主题列表
 els.topicBack.addEventListener("click", () => switchToTopicList());
 
-// 主题页 "查看色板"（只读 popover）
-els.tpPaletteToggle.addEventListener("click", () => {
-  const topic = state.topics[state.currentTopicId];
-  if (!topic) return;
-  if (els.paletteViewer.hidden) showPaletteViewer(topic);
-  else hidePaletteViewer();
-});
-els.pvClose.addEventListener("click", hidePaletteViewer);
+// 主题列表 "← 首页"
+els.topicListBack.addEventListener("click", () => switchToHome());
 
 // v3-δ：导出笔记
 els.tpExportBtn.addEventListener("click", async () => {
@@ -3709,14 +3786,6 @@ document.addEventListener("mousedown", (e) => {
   if (e.target.closest(".tc-menu-btn")) return;
   hideTopicCardMenu();
 });
-// 点空白关闭 palette viewer（除非点的是 viewer 自己或触发按钮）
-document.addEventListener("mousedown", (e) => {
-  if (els.paletteViewer.hidden) return;
-  if (e.target.closest("#paletteViewer")) return;
-  if (e.target.closest("#tpPaletteToggle")) return;
-  hidePaletteViewer();
-});
-
 // 新建主题 modal 控制
 els.ntmClose.addEventListener("click", closeNewTopicModal);
 els.newTopicModal.addEventListener("click", (e) => {
@@ -3753,11 +3822,10 @@ els.ntmPrev.addEventListener("click", () => {
 els.ntmAddRow.addEventListener("click", ntmAddPaletteRow);
 els.ntmConfirm.addEventListener("click", ntmDoCreate);
 
-// ESC 关 modal / palette viewer / "..." 菜单
+// ESC 关 modal / "..." 菜单
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!els.newTopicModal.hidden) { closeNewTopicModal(); return; }
-  if (!els.paletteViewer.hidden) { hidePaletteViewer(); return; }
   if (!els.topicCardMenu.hidden) { hideTopicCardMenu(); return; }
 });
 
@@ -3774,5 +3842,5 @@ _bootstrapPromise.then(() => {
       createdAt: new Date().toISOString(),
     };
   }
-  renderTopicGrid();
+  switchToHome();
 });

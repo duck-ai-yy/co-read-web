@@ -9,9 +9,25 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <!-- 主题列表（landing）= v3-β：把"输 URL 开始读"挪到主题页里，landing 是主题选择 -->
-  <main id="landing" class="view active">
+  <!-- 首页：粘贴论文链接直接开始（极简入口；主题管理后置）-->
+  <main id="home" class="view active">
+    <div class="home-inner">
+      <h1 class="home-brand">⊳ Co-Read</h1>
+      <p class="tagline">粘贴论文链接，开始深度伴读。</p>
+      <form id="homeLoadForm" class="load-form">
+        <input type="text" id="homeUrlInput" placeholder="arXiv 链接 / 直接 PDF URL →" autocomplete="off" />
+        <button type="submit" aria-label="开始伴读">↵</button>
+      </form>
+      <p class="hint">支持 arXiv 链接 / 直接 PDF URL / <label class="file-link">本地 PDF<input type="file" id="homeFileInput" accept="application/pdf" hidden></label></p>
+      <div id="homeRecent" class="home-recent"></div>
+      <button id="homeManageBtn" type="button" class="ghost-text home-manage">我的主题 →</button>
+    </div>
+  </main>
+
+  <!-- 主题列表 = 主题管理（从首页"我的主题"进入）-->
+  <main id="landing" class="view">
     <div class="topics-page">
+      <button id="topicListBack" type="button" class="ghost-text tl-back">← 首页</button>
       <header class="topics-header">
         <div>
           <h1>主题</h1>
@@ -33,7 +49,6 @@
           <h2 id="tpName" class="tp-name"></h2>
           <div id="tpPaletteRow" class="tp-palette-row" title="主题创建后色板不可修改"></div>
         </div>
-        <button id="tpPaletteToggle" type="button" class="ghost-text" title="查看色板（已冻结）">查看色板</button>
       </header>
       <!-- 添加论文表单（复用 landing 的 loadForm 视觉）-->
       <form id="tpLoadForm" class="load-form tp-load-form">
@@ -107,15 +122,6 @@
     <button type="button" data-action="delete" role="menuitem" class="danger">删除主题</button>
   </div>
 
-  <!-- 主题色板查看面板（只读）-->
-  <div id="paletteViewer" class="palette-viewer" hidden role="dialog" aria-modal="false">
-    <header class="pv-header">
-      <span>本主题色板（已冻结）</span>
-      <button id="pvClose" type="button" class="ghost" aria-label="关闭">×</button>
-    </header>
-    <div id="pvBody" class="pv-body"></div>
-  </div>
-
   <!-- 整页 loading mask（拉取 PDF / 抽取正文阶段挡输入）-->
   <div id="loadingMask" class="loading-mask" hidden role="status" aria-live="polite">
     <div class="loading-spinner" aria-hidden="true"></div>
@@ -146,11 +152,9 @@
             <button type="button" data-scale="page-fit"   role="option">适合页面</button>
           </div>
         </div>
-        <!-- v3-polish-4：搜索框始终可见，🔍 emoji 在输入框内作前缀提示（鸭鸭 UX）；
-             ⌘F 改为 focus #findInput 而不再 toggle 显隐 -->
+        <!-- 搜索框始终可见；⌘F focus #findInput -->
         <!-- v5：findBar 下方浮出实时搜索结果下拉（#findDropdown，输入即预览）-->
         <div id="findBar" class="find-bar">
-          <span class="find-icon" aria-hidden="true">🔍</span>
           <input
             type="text"
             id="findInput"
