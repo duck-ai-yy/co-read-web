@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Co-Read · 论文伴读</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%E2%8A%B3%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf_viewer.min.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- 主题列表（landing）= v3-β：把"输 URL 开始读"挪到主题页里，landing 是主题选择 -->
+  <main id="landing" class="view active">
+    <div class="topics-page">
+      <header class="topics-header">
+        <div>
+          <h1>主题</h1>
+          <p class="tagline">每个主题 = 一组论文 + 一套冻结色板 + 一份导出笔记。</p>
+        </div>
+        <button id="newTopicBtn" type="button" class="primary-btn">+ 新建主题</button>
+      </header>
+      <div id="topicGrid" class="topic-grid"></div>
+      <p id="landingStatus" class="status" hidden></p>
+    </div>
+  </main>
+
+  <!-- 主题页：某个主题下的 PDF 列表 + 添加论文入口 -->
+  <section id="topicPage" class="view">
+    <div class="topic-page-inner">
+      <header class="topic-page-header">
+        <button id="topicBack" type="button" class="ghost" aria-label="返回主题列表" title="返回主题列表">←</button>
+        <div class="tp-title-block">
+          <h2 id="tpName" class="tp-name"></h2>
+          <div id="tpPaletteRow" class="tp-palette-row" title="主题创建后色板不可修改"></div>
+        </div>
+        <button id="tpPaletteToggle" type="button" class="ghost-text" title="查看色板（已冻结）">查看色板</button>
+      </header>
+      <!-- 添加论文表单（复用 landing 的 loadForm 视觉）-->
+      <form id="tpLoadForm" class="load-form tp-load-form">
+        <input
+          type="text"
+          id="tpUrlInput"
+          placeholder="粘贴论文链接，加入本主题 →"
+          autocomplete="off"
+        />
+        <button type="submit" aria-label="加入主题">↵</button>
+      </form>
+      <p class="hint">支持 arXiv 链接 / 直接 PDF URL / <label class="file-link">本地 PDF<input type="file" id="tpFileInput" accept="application/pdf" hidden></label></p>
+      <p id="tpStatus" class="status" hidden></p>
+
+      <div id="tpPdfList" class="tp-pdf-list"></div>
+
+      <footer class="tp-footer">
+        <button id="tpExportBtn" type="button" class="ghost-btn" title="导出本主题为 markdown 笔记">[导出笔记]</button>
+      </footer>
+    </div>
+  </section>
+
+  <!-- 新建主题 modal（两步）-->
+  <div id="newTopicModal" class="modal-mask" hidden role="dialog" aria-modal="true" aria-labelledby="ntmTitle">
+    <div class="modal">
+      <header class="modal-header">
+        <h3 id="ntmTitle">新建主题</h3>
+        <button id="ntmClose" type="button" class="ghost" aria-label="取消">×</button>
+      </header>
+      <div class="modal-body">
+        <!-- Step 1: 起名 -->
+        <section id="ntmStep1" class="ntm-step active">
+          <label class="ntm-label">主题名（≤ 30 字）</label>
+          <input
+            type="text"
+            id="ntmNameInput"
+            maxlength="30"
+            placeholder="例如：LLM 综述 / 博士开题"
+            autocomplete="off"
+          />
+          <p class="ntm-hint">e.g. "RAG 评估" / "我的研究方向"</p>
+        </section>
+        <!-- Step 2: 编辑 palette -->
+        <section id="ntmStep2" class="ntm-step">
+          <p class="ntm-hint">改 label / 增删行。emoji 不可改（颜色由 emoji 决定）。<br><strong>⚠ 创建后整套色板将完全冻结。</strong></p>
+          <div id="ntmPaletteEditor" class="ntm-palette-editor"></div>
+          <button id="ntmAddRow" type="button" class="ghost-btn ntm-add-row">+ 添加一行</button>
+        </section>
+        <!-- Step 3: 确认 -->
+        <section id="ntmStep3" class="ntm-step">
+          <p class="ntm-confirm-text">即将创建主题：</p>
+          <div id="ntmConfirmName" class="ntm-confirm-name"></div>
+          <div id="ntmConfirmPalette" class="ntm-confirm-palette"></div>
+          <p class="ntm-warn">⚠ 创建后 palette 不可改。确认创建？</p>
+        </section>
+      </div>
+      <footer class="modal-footer">
+        <span id="ntmStepIndicator" class="ntm-step-indicator">第 1 / 3 步</span>
+        <div class="ntm-actions">
+          <button id="ntmPrev" type="button" class="ghost-btn" hidden>← 上一步</button>
+          <button id="ntmNext" type="button" class="primary-btn">下一步 →</button>
+          <button id="ntmConfirm" type="button" class="primary-btn" hidden>确认创建</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- 主题卡片菜单（重命名/删除）-->
+  <div id="topicCardMenu" class="card-menu" hidden role="menu">
+    <button type="button" data-action="rename" role="menuitem">重命名</button>
+    <button type="button" data-action="delete" role="menuitem" class="danger">删除主题</button>
+  </div>
+
+  <!-- 主题色板查看面板（只读）-->
+  <div id="paletteViewer" class="palette-viewer" hidden role="dialog" aria-modal="false">
+    <header class="pv-header">
+      <span>本主题色板（已冻结）</span>
+      <button id="pvClose" type="button" class="ghost" aria-label="关闭">×</button>
+    </header>
+    <div id="pvBody" class="pv-body"></div>
+  </div>
+
+  <!-- 整页 loading mask（拉取 PDF / 抽取正文阶段挡输入）-->
+  <div id="loadingMask" class="loading-mask" hidden role="status" aria-live="polite">
+    <div class="loading-spinner" aria-hidden="true"></div>
+    <div id="loadingText" class="loading-text">正在拉取 PDF…</div>
+  </div>
+
+  <!-- 阅读页 -->
+  <section id="reader" class="view">
+    <div class="reader-left">
+      <div class="pdf-toolbar">
+        <button id="backHome" class="ghost" aria-label="返回主题页" title="返回主题页">←</button>
+        <span id="pdfTitle" class="pdf-title" title=""></span>
+        <span id="readerTopicHint" class="reader-topic-hint" title=""></span>
+        <span class="toolbar-spacer"></span>
+        <!-- v3-thumb-zoom：缩放控件（−/百分比/+），位置在搜索区旁 -->
+        <div class="zoom-bar" role="toolbar" aria-label="缩放">
+          <button id="zoomOut" type="button" aria-label="缩小" title="缩小">−</button>
+          <button id="zoomLevel" type="button" aria-haspopup="listbox" aria-expanded="false" title="缩放预设">100%</button>
+          <button id="zoomIn" type="button" aria-label="放大" title="放大">+</button>
+          <div id="zoomMenu" class="zoom-menu" hidden role="listbox" aria-label="缩放预设">
+            <button type="button" data-scale="0.5"  role="option">50%</button>
+            <button type="button" data-scale="0.75" role="option">75%</button>
+            <button type="button" data-scale="1"    role="option">100%</button>
+            <button type="button" data-scale="1.25" role="option">125%</button>
+            <button type="button" data-scale="1.5"  role="option">150%</button>
+            <button type="button" data-scale="2"    role="option">200%</button>
+            <button type="button" data-scale="page-width" role="option">适合宽度</button>
+            <button type="button" data-scale="page-fit"   role="option">适合页面</button>
+          </div>
+        </div>
+        <!-- v3-polish-4：搜索框始终可见，🔍 emoji 在输入框内作前缀提示（鸭鸭 UX）；
+             ⌘F 改为 focus #findInput 而不再 toggle 显隐 -->
+        <!-- v5：findBar 下方浮出实时搜索结果下拉（#findDropdown，输入即预览）-->
+        <div id="findBar" class="find-bar">
+          <span class="find-icon" aria-hidden="true">🔍</span>
+          <input
+            type="text"
+            id="findInput"
+            placeholder="搜索…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <span id="findStatus" class="find-status">0 / 0</span>
+          <button id="findPrev" type="button" aria-label="上一个匹配" title="上一个 (Shift+Enter)">‹</button>
+          <button id="findNext" type="button" aria-label="下一个匹配" title="下一个 (Enter)">›</button>
+          <button id="findClose" type="button" aria-label="清空搜索" title="清空">×</button>
+          <!-- v5：实时结果下拉预览（输入关键词、未回车即浮出）。
+               必须有 hidden 属性 + CSS [hidden]{display:none!important}（HTML hidden 被 display 覆盖的老坑）-->
+          <div id="findDropdown" class="find-dropdown" hidden role="listbox" aria-label="搜索结果预览"></div>
+        </div>
+        <!-- v3-polish-5：pageInfo 回到 toolbar 末尾（低调样式）。原 sidebar 顶部位置违反 affordance -->
+        <span id="pageInfo">- / -</span>
+      </div>
+      <!-- v3-thumb-zoom：sidebar + viewer 横向分布（pdf-toolbar 在上面单独一行） -->
+      <div class="reader-body">
+        <!-- v3-polish-4：缩略图 sidebar 默认显示；顶部承载页码（原 toolbar #pageInfo 移过来） -->
+        <aside id="thumbnailSidebar" class="thumb-sidebar" aria-label="页面缩略图">
+          <div id="thumbnailView" class="pdfThumbnailViewer"></div>
+        </aside>
+        <div id="viewerContainer" class="pdf-container">
+          <div id="viewer" class="pdfViewer"></div>
+          <!-- v2-a 划线工具：色板（选区后浮出） + 高亮气泡（点已有高亮浮出） -->
+          <!-- 都用 position: absolute，挂在 viewerContainer 上，跟随滚动 -->
+          <!-- v3-polish：色板按钮由 renderColorPalette() 按当前主题 palette 动态生成 -->
+          <!-- 取消选中（selectionchange + isCollapsed）/ mouseleave 150ms / 滚动 / 点空白 → 自动 hide，无需 × close 按钮 -->
+          <div id="colorPalette" class="color-palette" hidden role="toolbar" aria-label="高亮颜色选择"></div>
+          <div id="hlBubble" class="hl-bubble" hidden role="toolbar" aria-label="高亮操作">
+            <button type="button" data-action="quote"  title="引用到对话">↪ 引用</button>
+            <button type="button" data-action="delete" title="删除高亮">🗑</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="reader-right">
+      <div class="thread-bar">
+        <button id="threadSummary" type="button" class="thread-summary" aria-haspopup="listbox" aria-expanded="false" title="切换对话">⊳ 准备中…</button>
+        <div id="threadList" class="thread-list" hidden role="listbox" aria-label="对话列表"></div>
+      </div>
+      <div id="chatMessages" class="chat-messages"></div>
+      <!-- v3-polish-2 #3：引用 chip 独立一行，含 ✕ 取消。一次只允许一条 pending quote -->
+      <div id="chatQuoteBar" class="quote-bar" hidden></div>
+      <form id="chatForm" class="chat-form">
+        <textarea id="chatInput" placeholder="聊聊论文（Enter 发送 / Shift+Enter 换行）" rows="2"></textarea>
+        <button id="sendBtn" type="submit" aria-label="发送">↵</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- marked.js: 轻量 Markdown 渲染，~30KB CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

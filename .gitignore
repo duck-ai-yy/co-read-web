@@ -1,0 +1,14 @@
+# 敏感 —— 含真实 API key，绝不入库
+.env
+
+# Python 虚拟环境
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# 测试截图（开发过程产物，不入库）
+*.png
+e2e-screenshots/
