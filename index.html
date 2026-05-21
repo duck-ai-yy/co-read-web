@@ -93,7 +93,7 @@
         </section>
         <!-- Step 2: 编辑 palette -->
         <section id="ntmStep2" class="ntm-step">
-          <p class="ntm-hint">改 label / 增删行。emoji 不可改（颜色由 emoji 决定）。<br><strong>⚠ 创建后整套色板将完全冻结。</strong></p>
+          <p class="ntm-hint"><strong class="ntm-hint-warn">⚠ 创建后整套色板将完全冻结</strong></p>
           <div id="ntmPaletteEditor" class="ntm-palette-editor"></div>
           <button id="ntmAddRow" type="button" class="ghost-btn ntm-add-row">+ 添加一行</button>
         </section>
@@ -186,25 +186,50 @@
           <!-- v3-polish：色板按钮由 renderColorPalette() 按当前主题 palette 动态生成 -->
           <!-- 取消选中（selectionchange + isCollapsed）/ mouseleave 150ms / 滚动 / 点空白 → 自动 hide，无需 × close 按钮 -->
           <div id="colorPalette" class="color-palette" hidden role="toolbar" aria-label="高亮颜色选择"></div>
-          <div id="hlBubble" class="hl-bubble" hidden role="toolbar" aria-label="高亮操作">
-            <button type="button" data-action="quote"  title="引用到对话">↪ 引用</button>
-            <button type="button" data-action="delete" title="删除高亮">🗑</button>
+          <!-- v6 划线浮出 comment 框（选色后浮在原文旁）：不填走掉 = 纯高亮；填了发送 = 保存。
+               必须有 hidden 属性 + CSS [hidden]{display:none!important}（HTML hidden 被 display 覆盖的老坑）-->
+          <div id="cmtCompose" class="cmt-compose" hidden>
+            <textarea id="cmtComposeInput" rows="1" placeholder="写批注…  输入 @ 可召唤 AI"></textarea>
+            <button id="cmtComposeSend" type="button">发送</button>
           </div>
         </div>
       </div>
     </div>
+    <!-- v6 comment 模型：右栏 = comment 列表（手风琴两级折叠）。
+         每条 comment = 一段划线高亮 + 围绕它的讨论；main 是不绑高亮的「全文 comment」，置顶。
+         划线交互（浮出 comment 框）+ @AI 在 Block 3 接入。 -->
     <div class="reader-right">
-      <div class="thread-bar">
-        <button id="threadSummary" type="button" class="thread-summary" aria-haspopup="listbox" aria-expanded="false" title="切换对话">⊳ 准备中…</button>
-        <div id="threadList" class="thread-list" hidden role="listbox" aria-label="对话列表"></div>
+      <header class="cmt-header">
+        <span id="cmtSummary" class="cmt-summary">⊳ 准备中…</span>
+        <button id="readerExportBtn" type="button" class="cmt-export-btn" title="把本篇收入笔记的内容导出为 markdown">导出笔记 ↓</button>
+      </header>
+      <div id="commentList" class="comment-list" role="list" aria-label="comment 列表"></div>
+    </div>
+  </section>
+
+  <!-- 导出页：预览 + 逐条勾选 + 下载 .md（reader/topicPage 的「导出笔记」按钮进入）-->
+  <section id="exportPage" class="view">
+    <div class="export-page-inner">
+      <header class="export-header">
+        <button id="exportBack" type="button" class="ghost" aria-label="返回" title="返回">←</button>
+        <h2 class="export-title">导出笔记</h2>
+        <span class="toolbar-spacer"></span>
+        <button id="exportDownloadBtn" type="button" class="primary-btn">下载 .md</button>
+      </header>
+      <div class="export-settings">
+        <div class="export-setting-row">
+          <span class="export-setting-label">范围</span>
+          <label class="export-radio"><input type="radio" name="exportScope" value="current"><span>当前篇</span></label>
+          <label class="export-radio"><input type="radio" name="exportScope" value="topic"><span>整个主题</span></label>
+        </div>
+        <div class="export-setting-row">
+          <span class="export-setting-label">分组</span>
+          <label class="export-radio"><input type="radio" name="exportGroup" value="tag" checked><span>按标签</span></label>
+          <label class="export-radio"><input type="radio" name="exportGroup" value="reading"><span>按阅读顺序</span></label>
+        </div>
       </div>
-      <div id="chatMessages" class="chat-messages"></div>
-      <!-- v3-polish-2 #3：引用 chip 独立一行，含 ✕ 取消。一次只允许一条 pending quote -->
-      <div id="chatQuoteBar" class="quote-bar" hidden></div>
-      <form id="chatForm" class="chat-form">
-        <textarea id="chatInput" placeholder="聊聊论文（Enter 发送 / Shift+Enter 换行）" rows="2"></textarea>
-        <button id="sendBtn" type="submit" aria-label="发送">↵</button>
-      </form>
+      <p class="export-preview-hint">预览 —— 勾选要收入的内容，取消的不导出</p>
+      <div id="exportPreview" class="export-preview"></div>
     </div>
   </section>
 

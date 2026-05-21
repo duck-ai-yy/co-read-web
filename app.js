@@ -44,9 +44,8 @@ const state = {
   // v2-a 划线高亮
   pdfKey: "",          // 当前 PDF 在 IndexedDB 里的 key（filename+size 或 URL）
   annotations: [],     // 当前 PDF 的高亮列表 [{id,color,pages:[{page,rects,text}],text,topicId,createdAt}]
-  // v2-b 多 thread
-  threads: {},         // id → thread 对象（结构见上）
-  currentThreadId: "main",
+  // v6：thread = comment 的 messages 容器（id → thread；"main" 是全文 comment）
+  threads: {},
   // v3-α 主题
   currentTopicId: "default",
   topics: {},          // id → topic 对象
@@ -56,14 +55,23 @@ const state = {
   // v3-β 阅读页面打开时来自哪个主题（用于 "← 返回主题页"）
   // 默认 = "default"；用户从某主题点 PDF 进 reader 时设为该主题 id
   readerFromTopicId: "default",
-  // v3-polish-2 #3：当前 chat 待发送的引用（独立 chip 形式显示在 chatInput 上方）
-  // 形状：{ annId, color, emoji, pageLabel, quoted }（quoted 已截断到 ~80 字符 for chip 显示）
-  // 发送时 sendMessage 把它拼到 user message content 头部，再清空
-  // 一次只允许一条；新的高亮覆盖旧的
-  pendingQuote: null,
+  // v6 comment 模型：右栏手风琴当前展开的 comment id（null = 全折叠）
+  expandedCommentId: null,
+  // v6：级别 2 折叠 —— 这些 comment 的中间轮次已被用户点开「展开全部」
+  cmtShowAll: new Set(),
+  // v6 Block 3：@AI 流式中的 comment id（null = 没在流）
+  streamingCommentId: null,
+  // v6 Block 3：最近一次 @AI 失败的错误 { commentId, text }，渲染在该卡片里，下次操作清掉
+  streamError: null,
+  // v6 Block 3：划线浮出 comment 框当前锚定的 comment id
+  composeCommentId: null,
 };
 // 开发期方便 console 调试
 window.__coread = state;
+// v6 comment 模型调试入口（test / console 用；app.js 是 module，函数不在全局）
+window.__coreadGetComments = () => getComments();
+window.__coreadExportCurrent = (group) => generateCurrentPdfMarkdown(group);
+window.__coreadExportTopic = (id, group) => generateMarkdownExport(id || state.currentTopicId, group);
 // v3-γ caching debug log 开关（默认开；console 里 `window.__coreadCachingDebug = false` 关掉）
 if (window.__coreadCachingDebug === undefined) window.__coreadCachingDebug = true;
 // v3-α: 暴露主题数据层 helper，后续 PR（主题列表 UI / 色板编辑器）会用
@@ -94,18 +102,40 @@ function makeMainThread() {
     createdAt: Date.now(),
   };
 }
-// v3-polish #7：thread 显示名 —— customName 优先（trim 后非空），否则用自动 label
-function displayThreadLabel(t) {
-  if (!t) return "";
-  const name = (t.customName || "").trim();
-  return name || t.label || "";
-}
 function resetThreads() {
   state.threads = { main: makeMainThread() };
-  state.currentThreadId = "main";
 }
-function getCurrentThread() {
-  return state.threads[state.currentThreadId] || state.threads.main;
+
+// ── comment 视图模型（v6 重构）──────────────────────────────
+// comment = 一段划线高亮(annotation) + 围绕它的讨论(thread.messages) 的「逻辑视图」。
+// 不是新存储：annotation 存 annotations store、messages 存 threads store，
+// getComments() 只在内存里把两者 join 起来 —— thread.id === annotation.id 是这把钥匙。
+// 「对话/thread」概念对用户退休，thread 退化成 comment 的 messages 容器。
+//
+// 特殊：main —— 不绑高亮的「全文 comment」，承载 primeSummary + 散点提问，永远置顶、不可删。
+//
+// comment 形状：{ id, isMain, annotation|null, thread, messages }
+//   - 含 0 消息的纯标记高亮（划线选色后没填走掉）也是一条 comment
+//   - 每次 render / 导出现算，不缓存（条目 < 100，cheap；避免 join 状态不一致）
+function getComments() {
+  const list = [];
+  // 置顶：全文 comment（main thread）
+  const main = state.threads.main || makeMainThread();
+  list.push({ id: "main", isMain: true, annotation: null, thread: main, messages: main.messages });
+  // 每条 annotation = 一条 comment，按创建时间升序（与 PDF 阅读时间线 / 导出顺序一致）
+  const anns = [...state.annotations].sort(
+    (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+  );
+  for (const ann of anns) {
+    const thread = state.threads[ann.id] || ensureAnnotationThread(ann);
+    list.push({ id: ann.id, isMain: false, annotation: ann, thread, messages: thread.messages });
+  }
+  return list;
+}
+
+// 单条消息是否「收入笔记」—— 缺字段（旧数据 / 兜底）默认视为收入
+function isMsgIncluded(m) {
+  return !!m && m.includedInNote !== false;
 }
 // thread label：高亮 thread 显示 "p.N · 🔴"（短而稳定；v3 可加 quotedText 摘要）
 function threadLabel(ann) {
@@ -182,16 +212,21 @@ const els = {
   findClose: $("findClose"),
   // v5：实时搜索结果下拉预览
   findDropdown: $("findDropdown"),
-  chatMessages: $("chatMessages"),
-  chatForm: $("chatForm"),
-  chatInput: $("chatInput"),
-  chatQuoteBar: $("chatQuoteBar"),
-  sendBtn: $("sendBtn"),
-  threadSummary: $("threadSummary"),
-  threadList: $("threadList"),
+  // v6 comment 列表（右栏）
+  cmtSummary: $("cmtSummary"),
+  commentList: $("commentList"),
+  readerExportBtn: $("readerExportBtn"),
+  // 导出页
+  exportPage: $("exportPage"),
+  exportBack: $("exportBack"),
+  exportDownloadBtn: $("exportDownloadBtn"),
+  exportPreview: $("exportPreview"),
   // v2-a 划线高亮
   colorPalette: $("colorPalette"),
-  hlBubble: $("hlBubble"),
+  // v6 划线浮出 comment 框
+  cmtCompose: $("cmtCompose"),
+  cmtComposeInput: $("cmtComposeInput"),
+  cmtComposeSend: $("cmtComposeSend"),
   // v2-b 整页 loading mask
   loadingMask: $("loadingMask"),
   loadingText: $("loadingText"),
@@ -383,23 +418,21 @@ async function loadPdf({ url, file, topicId }) {
             };
           }
         }
-        // 当前若停在 main thread，且 main 有历史消息 → 重渲染 chat 区
-        if (state.currentThreadId === "main") {
-          renderChatFromThread();
-        }
-        updateThreadSummary();
+        // v6：messages 灌回内存后重渲右栏 comment 列表
+        renderCommentList();
       } catch (e) {
         console.warn("[loadThreadsByPdfKey]", e);
       }
       // 当前已渲染的 page 立即补画一次（textlayerrendered 已经触发过的页）
       renderAllHighlights();
-      updateThreadSummary();
+      renderCommentList();
     }).catch((e) => console.warn("[loadAnnotations]", e));
 
     await extractAllText((i, n) => {
       showLoadingMask(`正在解析正文（共 ${n} 页，${i}/${n}）…`);
     });
     hideLoadingMask();
+    // v6：自动核心总结进「全文 comment」(main)
     maybePrimeSummary();
   } catch (e) {
     console.error("[loadPdf]", e);
@@ -662,6 +695,11 @@ const COLOR_MAP = {
   purple: { emoji: "🟣", label: "紫" },
   yellow: { emoji: "🟡", label: "黄" },
   gray:   { emoji: "⚪", label: "灰" },
+};
+// 标签色 hex 回退表（palette 里查不到 tag 时用；与 DEFAULT_PALETTE 的 color 对齐）
+const PALETTE_HEX = {
+  red: "#ff5e5e", green: "#54d062", blue: "#4a9eff",
+  purple: "#b06dff", yellow: "#f5d042", gray: "#b8b8b8",
 };
 
 // ────────────────────── v3-α 主题数据层 ──────────────────────
@@ -1316,6 +1354,38 @@ function resolveAnnHex(ann) {
 }
 
 // 给某页画 / 重画该页所有 annotation 的 rect
+// v6：按行合并 rect —— range.getClientRects() 对一行文字会返回多个近似重叠的 rect
+// （pdf.js textLayer 的 span 切分 + 1-3px 抖动）。不合并的话半透明 .hl-rect 叠加 →
+// 深色块（颜色重叠）+ 右侧毛边。这里把竖向重叠的 rect 并成一行一个 bounding-box。
+// 只在渲染时做，不动存储的 ann.pages[].rects（也修好用户已存在的旧高亮）。
+function mergeRectsByLine(rects) {
+  if (!rects || rects.length === 0) return [];
+  const sorted = [...rects].sort((a, b) => a.topPct - b.topPct || a.leftPct - b.leftPct);
+  const lines = [];
+  for (const r of sorted) {
+    const rBottom = r.topPct + r.heightPct;
+    const line = lines[lines.length - 1];
+    // 与当前行竖向重叠超过自身高度 60% → 判为同一行
+    if (line) {
+      const overlap = Math.min(rBottom, line.bottom) - Math.max(r.topPct, line.top);
+      if (overlap > 0.6 * r.heightPct) {
+        line.left = Math.min(line.left, r.leftPct);
+        line.right = Math.max(line.right, r.leftPct + r.widthPct);
+        line.top = Math.min(line.top, r.topPct);
+        line.bottom = Math.max(line.bottom, rBottom);
+        continue;
+      }
+    }
+    lines.push({ left: r.leftPct, right: r.leftPct + r.widthPct, top: r.topPct, bottom: rBottom });
+  }
+  return lines.map((l) => ({
+    leftPct: l.left,
+    topPct: l.top,
+    widthPct: l.right - l.left,
+    heightPct: l.bottom - l.top,
+  }));
+}
+
 function renderHighlightsForPage(pageNumber) {
   const pageEl = els.viewer.querySelector(`.page[data-page-number="${pageNumber}"]`);
   if (!pageEl) return;
@@ -1332,7 +1402,7 @@ function renderHighlightsForPage(pageNumber) {
     const pageEntry = ann.pages.find((p) => p.page === pageNumber);
     if (!pageEntry) continue;
     const hex = resolveAnnHex(ann);
-    for (const rect of pageEntry.rects) {
+    for (const rect of mergeRectsByLine(pageEntry.rects)) {
       const div = document.createElement("div");
       // 保留 color-${id} class 作为 CSS fallback（palette 查不到 tag 时仍能上色）
       div.className = `hl-rect color-${ann.color}`;
@@ -1373,7 +1443,8 @@ function appendAnnotationRects(ann) {
     if (layer.querySelector(`.hl-rect[data-ann-id="${ann.id}"]`)) continue;
     const frag = document.createDocumentFragment();
     const hex = resolveAnnHex(ann);
-    for (const rect of pageEntry.rects) {
+    // v6：与 renderHighlightsForPage 对齐 —— 按行合并 rect，消除半透明叠加深色斑块 + 右侧毛边
+    for (const rect of mergeRectsByLine(pageEntry.rects)) {
       const div = document.createElement("div");
       // 保留 color-${id} class 作为 CSS fallback（palette 查不到 tag 时仍能上色）
       div.className = `hl-rect color-${ann.color}`;
@@ -1409,9 +1480,13 @@ function renderColorPalette() {
     btn.className = "cp-btn";
     btn.dataset.color = tag.id;
     btn.dataset.tagLabel = tag.label || "";
-    btn.title = `${tag.emoji || ""} ${tag.label || ""}`.trim();
-    btn.setAttribute("aria-label", tag.label || tag.emoji || tag.id);
-    btn.textContent = tag.emoji || "●";
+    btn.title = tag.label || tag.id;
+    btn.setAttribute("aria-label", tag.label || tag.id);
+    // 纯色块图标：取标签 color hex
+    const sw = document.createElement("span");
+    sw.className = "cp-swatch";
+    sw.style.background = tag.color || "#b8b8b8";
+    btn.appendChild(sw);
     els.colorPalette.appendChild(btn);
   }
 }
@@ -1466,12 +1541,6 @@ function hideColorPalette() {
   _pendingSelection = null;
 }
 
-function hideHlBubble() {
-  if (_bubbleHideTimer) { clearTimeout(_bubbleHideTimer); _bubbleHideTimer = null; }
-  els.hlBubble.hidden = true;
-  els.hlBubble.dataset.annId = "";
-}
-
 // ── 创建 annotation：选完色后调用 ──
 async function createAnnotation(color) {
   const desc = _pendingSelection;
@@ -1519,10 +1588,11 @@ async function createAnnotation(color) {
   appendAnnotationRects(ann);
   // saveAnnotations 是 IDB 异步写（put）；不会阻塞主线程，保留原 fire-and-forget
   saveAnnotations(state.pdfKey, state.annotations).catch((e) => console.warn("[save]", e));
-  // 划线 = 标记/记录：先不开对话、不切 thread（不打断用户当前的对话上下文）。
-  // 只把引用挂到输入框上方 —— 用户真发消息时（sendMessage）才实质化这条高亮的 thread。
+  // v6：划完高亮 = 建了一条 comment。右栏列表加上卡片（折叠态），并在原文旁浮出 comment 框。
+  // A 方案：不填走掉 = 纯标记高亮（annotation 已存、无 messages）；填了发送 = 保存进这条 comment。
   ensureAnnotationThread(ann);
-  quoteAnnotationToChat(ann);
+  renderCommentList();
+  showCmtCompose(ann.id);
 }
 
 // ── 为 annotation 建立对应 thread（重复调用幂等）──
@@ -1554,75 +1624,26 @@ async function deleteAnnotation(id) {
   // 1. 同步直接抹掉 DOM 上所有 data-ann-id=id 的 hl-rect（视觉上瞬间消失）
   const rects = els.viewer.querySelectorAll(`.hl-rect[data-ann-id="${id}"]`);
   rects.forEach((el) => el.remove());
-  // 2. 隐藏气泡（如果当前显示的是这个 ann）
-  hideHlBubble();
-  // 3. 从 state 移除
+  // 2. 从 state 移除
   state.annotations.splice(idx, 1);
-  // 4. v2-b：联动删 thread；若正在看这个 thread → 切回 main
+  // 3. v2-b：联动删 thread（comment 的 messages 容器一并清掉）
   if (state.threads[id]) {
     delete state.threads[id];
     // v3-δ：联动删 IDB thread record（避免下次 hydrate 时出现孤儿 thread）
     deleteThreadById(id).catch((e) => console.warn("[deleteThreadById]", e));
-    if (state.currentThreadId === id) {
-      switchThread("main");
-    } else {
-      updateThreadSummary();
-    }
   }
+  // 4. 若被删的正是当前展开的 comment → 收起
+  if (state.expandedCommentId === id) state.expandedCommentId = null;
+  state.cmtShowAll.delete(id);
   // 5. 重新渲染受影响页，让其他 ann 的叠色重排到位（同步，但只动这几页）
   for (const p of ann.pages) renderHighlightsForPage(p.page);
-  // 6. 异步存
+  // 6. 右栏 comment 列表同步
+  renderCommentList();
+  // 7. 异步存
   saveAnnotations(state.pdfKey, state.annotations).catch((e) => console.warn("[save]", e));
 }
 
-// ── 切 thread：渲染对应 messages + 滚到 anchorPage（如有）──
-// 切之前先 abort 正在进行的 streaming（避免回复落到错的 thread 里）
-// v3-polish-2 #5：加 autoScroll 选项区分"显式切"（用户点击）vs "自动切"（createAnnotation 内部）
-//   autoScroll=true（默认）：用户行为，滚到 anchorPage + 居中显示 hl-rect
-//   autoScroll=false：createAnnotation 刚画完高亮后内部切 thread，**保持视角不动**
-//                     —— 鸭鸭：选中颜色后不要动页面，只有切 thread 才跳
-function switchThread(threadId, opts) {
-  const autoScroll = !opts || opts.autoScroll !== false;
-  if (!state.threads[threadId]) return;
-  if (state.currentThreadId === threadId) {
-    updateThreadSummary();
-    return;
-  }
-  // 流式中切走 → abort（让那个 thread 的 user 消息自然回滚，由 sendMessage 的 catch 处理）
-  if (state.streaming && state.abortCtl) {
-    state.abortCtl.abort();
-  }
-  state.currentThreadId = threadId;
-  renderChatFromThread();
-  updateThreadSummary();
-  closeThreadList();
-  // 切到高亮 thread → 滚到锚定页 + 短暂强调该 ann 的 rect（仅显式切）
-  const thread = state.threads[threadId];
-  if (autoScroll && thread.anchorPage && state.pdf) {
-    try {
-      pdfViewer.scrollPageIntoView({ pageNumber: thread.anchorPage });
-    } catch (_) { /* viewer 未就绪时忽略 */ }
-    if (thread.annotationId) {
-      // 等下一帧，让 PDF 页元素被滚到位 / hl-rect 已被画上
-      // （textlayerrendered 触发的 renderHighlightsForPage 已经 sync 完成 DOM；
-      //   PDF.js scrollPageIntoView 也是同步的，但布局还没刷 → rAF 安全）
-      requestAnimationFrame(() => {
-        const rect = els.viewer.querySelector(`.hl-rect[data-ann-id="${thread.annotationId}"]`);
-        if (rect && typeof rect.scrollIntoView === "function") {
-          rect.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-        flashAnnotation(thread.annotationId);
-      });
-    }
-  }
-  // 切到 thread 后，textarea 清空（避免上一个 thread 没发完的草稿混进来）
-  // pendingQuote 也清空（每个 thread 的引用语境独立；createAnnotation 后续会重设新 chip）
-  els.chatInput.value = "";
-  autoGrow(els.chatInput);
-  clearPendingQuote();
-}
-
-// 用 CSS class 闪一下对应 ann 的 rect（视觉强化"切过来了"）
+// 用 CSS class 闪一下对应 ann 的 rect（视觉强化"定位到这条高亮"）
 function flashAnnotation(annId) {
   const rects = els.viewer.querySelectorAll(`.hl-rect[data-ann-id="${annId}"]`);
   rects.forEach((el) => {
@@ -1632,220 +1653,441 @@ function flashAnnotation(annId) {
   });
 }
 
-// 把当前 thread 的 messages 渲染到 chat 区
-function renderChatFromThread() {
-  const thread = getCurrentThread();
-  els.chatMessages.replaceChildren();
-  for (const m of thread.messages) {
-    // user 消息要把 [CURRENT_PAGE: N]\n 前缀去掉再显示（与 sendMessage 中保存逻辑对齐）
-    if (m.role === "user") {
-      const display = m.content.replace(/^\[CURRENT_PAGE:\s*\d+\]\n/, "");
-      appendMsgBubble("user", display);
-    } else {
-      appendMsgBubble("assistant", m.content);
-    }
-  }
+// ══════════════════════ v6 comment 列表（右栏）══════════════════════
+// 右栏 = getComments() 的一列卡片。手风琴：同一时刻最多一张展开（state.expandedCommentId）。
+// 级别 2 折叠：展开卡片若消息 > CC_FOLD_THRESHOLD，中间未收入笔记的消息折起，收入的常驻。
+
+const CC_FOLD_THRESHOLD = 6;
+
+// annotation 页码标签："p.3" / "p.3-5"
+function annPageLabel(ann) {
+  const ps = (ann.pages || []).map((p) => p.page);
+  if (ps.length === 0) return "p.?";
+  return ps.length === 1 ? `p.${ps[0]}` : `p.${ps[0]}-${ps[ps.length - 1]}`;
 }
 
-// ── 引用到对话：渲染 chip 到 chatInput 上方独立行（v3-polish-2 #3 UX 改造）──
-// 旧路径：把 "> [p.N · 🔴] '...'" 直接 prepend 到 chatInput.value
-//        → 占用输入框、文字混在草稿里、用户难以区分自己打的字与引用
-// 新路径：渲染独立 chip 到 #chatQuoteBar，含 emoji + 页码 + 截断 quote + ✕ 取消
-//        chatInput 始终纯净，只承载用户输入；发送时 sendMessage 拼接 pendingQuote
-// v3-polish-2 #3：引用块**恢复**颜色 emoji（鸭鸭说之前 v3-polish 我去掉是错的；emoji 指的是主题 dot，不是引用块的）
-function quoteAnnotationToChat(ann) {
-  // 页码：单页用 "p.N"，跨页用 "p.N-M"
-  const pageNums = ann.pages.map((p) => p.page);
-  const pageLabel = pageNums.length === 1
-    ? `p.${pageNums[0]}`
-    : `p.${pageNums[0]}-${pageNums[pageNums.length - 1]}`;
-  // chip 显示用的截断版本（~80 字符）；发送时另算一份给 LLM
-  const MAX_CHIP_QUOTE = 80;
-  const chipQuoted = ann.text.length > MAX_CHIP_QUOTE
-    ? ann.text.slice(0, MAX_CHIP_QUOTE) + "…"
-    : ann.text;
+// comment 标签信息（emoji + label + page + 标签色 hex）；main 用中性色（无 hex）。
+// emoji / label / color 优先取自当前主题 palette，回退全局 COLOR_MAP（hex 用 PALETTE_HEX）。
+function commentTag(comment) {
+  if (comment.isMain) {
+    return { emoji: "📄", label: "全文", page: "", hex: null, isMain: true };
+  }
+  const ann = comment.annotation;
   const palette = state.topics[state.currentTopicId]?.palette || [];
   const tag = palette.find((t) => t.id === ann.color);
-  // emoji 优先取 palette 自带，否则回退到全局 COLOR_MAP（兼容老 ann）
   const emoji = tag?.emoji || COLOR_MAP[ann.color]?.emoji || "●";
-  // 一次只允许一条 pending quote：新选段创建新引用 → 直接覆盖旧 chip
-  state.pendingQuote = {
-    annId: ann.id,
-    color: ann.color,
-    emoji,
-    pageLabel,
-    quoted: chipQuoted,
-    // 完整文本另存（发送时拼给 LLM，可比 chip 截断版长，但仍受 MAX_QUOTE 限制）
-    fullQuoted: ann.text.length > 400 ? ann.text.slice(0, 400) + "…" : ann.text,
-  };
-  renderChatQuoteBar();
-  els.chatInput.focus();
+  const label = tag?.label || COLOR_MAP[ann.color]?.label || "";
+  const hex = tag?.color || PALETTE_HEX[ann.color] || null;
+  return { emoji, label, page: annPageLabel(ann), hex, isMain: false };
 }
 
-// ── 渲染 / 隐藏 chip ──
-function renderChatQuoteBar() {
-  const bar = els.chatQuoteBar;
-  if (!bar) return;
-  const q = state.pendingQuote;
-  if (!q) {
-    bar.replaceChildren();
-    bar.hidden = true;
-    return;
+// comment 原文（单行连缀、trim）
+function commentQuoteText(comment) {
+  if (comment.isMain) return "全文导读";
+  const txt = (comment.annotation.text || "").replace(/\s+/g, " ").trim();
+  return txt || "(无原文)";
+}
+
+function updateCommentSummary() {
+  if (!els.cmtSummary) return;
+  const n = state.annotations.length; // main 之外的 comment 数（含纯标记高亮）
+  els.cmtSummary.textContent = n === 0
+    ? "⊳ 还没有 comment —— 划线选色即可建一条"
+    : `⊳ ${n} 条 comment`;
+}
+
+// 主渲染入口：清空 #commentList 重建所有卡片
+function renderCommentList() {
+  if (!els.commentList) return;
+  const comments = getComments();
+  els.commentList.replaceChildren();
+  for (const c of comments) els.commentList.appendChild(buildCommentCard(c));
+  updateCommentSummary();
+}
+
+// 单张 comment 卡片（折叠态只渲染头；展开态额外渲染体）
+function buildCommentCard(comment) {
+  const expanded = state.expandedCommentId === comment.id;
+  const card = document.createElement("div");
+  card.className = "cmt-card"
+    + (comment.isMain ? " cmt-main" : "")
+    + (expanded ? " expanded" : "");
+  card.dataset.commentId = comment.id;
+  card.setAttribute("role", "listitem");
+
+  // 标签色：唯一从「标签」入口进来的颜色 —— 左色条 + chip 都用这个
+  // main（全文导读）无标签色，CSS 回退到中性灰
+  const tagInfo = commentTag(comment);
+  if (tagInfo.hex) card.style.setProperty("--cmt-color", tagInfo.hex);
+
+  // ── 头（折叠态一行：标签 + 原文 + 💬N [+ 🗑]）──
+  const head = document.createElement("div");
+  head.className = "cmt-card-head";
+  head.setAttribute("role", "button");
+  head.tabIndex = 0;
+  head.setAttribute("aria-expanded", expanded ? "true" : "false");
+
+  // 标签 chip：实心小圆点（标签色）+ label 文字 + 页码
+  const tag = document.createElement("span");
+  tag.className = "cc-tag" + (tagInfo.isMain ? " cc-tag-main" : "");
+  const dot = document.createElement("span");
+  dot.className = "cc-tag-dot";
+  dot.setAttribute("aria-hidden", "true");
+  const tagLabel = document.createElement("span");
+  tagLabel.className = "cc-tag-label";
+  tagLabel.textContent = tagInfo.label || "标签";
+  tag.append(dot, tagLabel);
+  if (tagInfo.page) {
+    const tagPage = document.createElement("span");
+    tagPage.className = "cc-tag-page";
+    tagPage.textContent = tagInfo.page;
+    tag.appendChild(tagPage);
   }
-  bar.replaceChildren();
-  const chip = document.createElement("div");
-  chip.className = "quote-chip";
-  chip.dataset.annId = q.annId;
-  const label = document.createElement("span");
-  label.className = "qc-label";
-  label.textContent = `${q.emoji} ${q.pageLabel} "${q.quoted}"`;
-  label.title = q.quoted; // 鼠标 hover 看完整截断文本
-  const closeBtn = document.createElement("button");
-  closeBtn.type = "button";
-  closeBtn.className = "qc-close";
-  closeBtn.setAttribute("aria-label", "取消引用");
-  closeBtn.title = "取消引用";
-  closeBtn.textContent = "×";
-  closeBtn.addEventListener("click", () => {
-    state.pendingQuote = null;
-    renderChatQuoteBar();
-    els.chatInput.focus();
-  });
-  chip.appendChild(label);
-  chip.appendChild(closeBtn);
-  bar.appendChild(chip);
-  bar.hidden = false;
-}
+  const quote = document.createElement("span");
+  quote.className = "cc-quote";
+  quote.textContent = comment.isMain ? commentQuoteText(comment) : `"${commentQuoteText(comment)}"`;
+  const count = document.createElement("span");
+  count.className = "cc-count";
+  count.textContent = `💬 ${comment.messages.length}`;
+  head.append(tag, quote, count);
 
-function clearPendingQuote() {
-  state.pendingQuote = null;
-  renderChatQuoteBar();
-}
-
-// ── 单击已有高亮 → 浮出气泡 ──
-function showHlBubble(annId, anchorRect) {
-  const ann = state.annotations.find((a) => a.id === annId);
-  if (!ann) return;
-  hideColorPalette();
-  // show 时清掉残留 timer（防止上一次 mouseleave 的 timeout 误关新 bubble）
-  if (_bubbleHideTimer) { clearTimeout(_bubbleHideTimer); _bubbleHideTimer = null; }
-  els.hlBubble.dataset.annId = annId;
-  // 定位：高亮 rect 上方居中
-  const cont = els.viewerContainer.getBoundingClientRect();
-  const BUBBLE_H = 32, GAP = 6;
-  let top = anchorRect.top - cont.top + els.viewerContainer.scrollTop - BUBBLE_H - GAP;
-  if (top < els.viewerContainer.scrollTop + 4) {
-    top = anchorRect.bottom - cont.top + els.viewerContainer.scrollTop + GAP;
+  if (!comment.isMain) {
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "cc-del";
+    del.dataset.action = "delete-comment";
+    del.title = "删除这条高亮 + 讨论";
+    del.setAttribute("aria-label", "删除 comment");
+    del.textContent = "🗑";
+    head.appendChild(del);
   }
-  let left = anchorRect.left - cont.left + els.viewerContainer.scrollLeft;
-  const maxLeft = els.viewerContainer.scrollLeft + cont.width - 140;
-  if (left > maxLeft) left = maxLeft;
-  if (left < els.viewerContainer.scrollLeft + 4) left = els.viewerContainer.scrollLeft + 4;
-  els.hlBubble.style.left = `${left}px`;
-  els.hlBubble.style.top  = `${top}px`;
-  els.hlBubble.hidden = false;
+  card.appendChild(head);
+
+  // ── 体（仅展开态渲染内容，省 DOM）──
+  const body = document.createElement("div");
+  body.className = "cmt-card-body";
+  if (expanded) {
+    if (!comment.isMain) {
+      const fq = document.createElement("div");
+      fq.className = "cc-fullquote";
+      fq.textContent = `"${commentQuoteText(comment)}"`;
+      body.appendChild(fq);
+    }
+    body.appendChild(renderCommentMessages(comment));
+    body.appendChild(buildCommentInput(comment));
+  }
+  card.appendChild(body);
+  return card;
 }
 
-// ────────────────────── chatClient ──────────────────────
-// v2-b：消息收发都基于"当前 thread"
-//   - state.threads[currentThreadId].messages 是真实历史，caching 前缀 = system + pdf_text + 该 thread 的历史
-//   - 不同 thread 各自独立的对话上下文（同一 PDF 共享 system + pdf_text 大前缀 → caching 命中率仍很高）
-async function sendMessage(userText) {
-  if (state.streaming) return;
-  // 若输入框带着某条高亮的引用 → 这条消息归属那条高亮的 thread。
-  // 划线 / 点引用时都不切 thread；真正发消息这一刻才实质化高亮 thread（"用了才算对话"）。
-  if (state.pendingQuote) {
-    const qAnn = state.annotations.find((a) => a.id === state.pendingQuote.annId);
-    if (qAnn && state.currentThreadId !== qAnn.id) {
-      ensureAnnotationThread(qAnn);
-      switchThread(qAnn.id, { autoScroll: false });
+// 展开态的消息区（含级别 2 折叠 + 流式占位气泡 + 错误提示）
+function renderCommentMessages(comment) {
+  const wrap = document.createElement("div");
+  wrap.className = "cc-messages";
+  const msgs = comment.messages;
+  const streamingThis = state.streamingCommentId === comment.id;
+
+  if (msgs.length === 0 && !streamingThis) {
+    // 无消息：不渲染占位文案（输入框 placeholder 已足够提示，多说冗余）
+  } else {
+    // 级别 2 折叠：消息多且未「展开全部」→ 只显示首条 + 末条 + 收入笔记的；中间折起
+    const showAll = state.cmtShowAll.has(comment.id);
+    let visibleIdx;
+    if (msgs.length <= CC_FOLD_THRESHOLD || showAll) {
+      visibleIdx = msgs.map((_, i) => i);
+    } else {
+      const keep = new Set([0, msgs.length - 1]);
+      msgs.forEach((m, i) => { if (isMsgIncluded(m)) keep.add(i); });
+      visibleIdx = [...keep].sort((a, b) => a - b);
+    }
+    const hiddenCount = msgs.length - visibleIdx.length;
+    let prev = -1, toggleInserted = false;
+    for (const i of visibleIdx) {
+      if (!toggleInserted && i - prev > 1) {
+        const t = document.createElement("button");
+        t.type = "button";
+        t.className = "cc-fold-toggle";
+        t.dataset.action = "unfold";
+        t.textContent = `··· 展开折叠的 ${hiddenCount} 条 ···`;
+        wrap.appendChild(t);
+        toggleInserted = true;
+      }
+      wrap.appendChild(buildMessageEl(msgs[i], i));
+      prev = i;
     }
   }
-  const thread = getCurrentThread();
-  const pageTag = `[CURRENT_PAGE: ${state.currentPage}]\n`;
-  // v3-polish-2 #3：pendingQuote chip → 拼到 user message 头部
-  //   block 格式与旧版本保持一致："> [p.N · 🔴] '...'\n\n"
-  //   这样 agent 看到的引用块格式不变（system prompt / 既有 LLM 习惯都已熟悉），
-  //   只是 UI 层把它从 textarea 移到独立 chip
-  let userPayload = userText;
-  let userDisplay = userText;
-  if (state.pendingQuote) {
-    const q = state.pendingQuote;
-    const quoteBlock = `> [${q.pageLabel} · ${q.emoji}] "${q.fullQuoted}"\n\n`;
-    userPayload = quoteBlock + userText;
-    userDisplay = quoteBlock + userText; // 在 chat 气泡里也保留引用，让用户回顾时知道自己引了什么
+
+  // 流式占位气泡：sendToComment 把 delta 写进这个 .content
+  if (streamingThis) {
+    const el = document.createElement("div");
+    el.className = "msg assistant streaming";
+    const role = document.createElement("div");
+    role.className = "role";
+    role.textContent = "Agent";
+    const content = document.createElement("div");
+    content.className = "content";
+    content.textContent = "…";
+    el.append(role, content);
+    wrap.appendChild(el);
   }
-  const userMsg = { role: "user", content: pageTag + userPayload };
-  thread.messages.push(userMsg);
-  appendMsgBubble("user", userDisplay); // 给用户看的不带 [CURRENT_PAGE] 标签
-  // 引用已随消息发出 → 清空 chip
-  clearPendingQuote();
-  // v3-δ：user 消息入 thread 立刻持久化（捕获"刚发出去就刷新"的极端情况）
+  // @AI 失败的错误提示（下次操作清掉）
+  if (state.streamError && state.streamError.commentId === comment.id) {
+    const err = document.createElement("div");
+    err.className = "err";
+    err.textContent = state.streamError.text;
+    wrap.appendChild(err);
+  }
+  return wrap;
+}
+
+// 单条消息 DOM（复用 .msg 样式）+「收入笔记」勾选
+function buildMessageEl(m, index) {
+  const el = document.createElement("div");
+  el.className = `msg ${m.role}` + (isMsgIncluded(m) ? "" : " note-excluded");
+
+  const roleEl = document.createElement("div");
+  roleEl.className = "role";
+  roleEl.textContent = m.role === "user" ? "你" : "Agent";
+
+  const contentEl = document.createElement("div");
+  contentEl.className = "content";
+  const text = m.role === "user" ? _stripPageTag(m.content) : (m.content || "");
+  if (m.role === "assistant") renderAssistant(contentEl, text);
+  else contentEl.textContent = text;
+
+  // 「收入笔记」勾选 —— 默认勾，导出按此过滤
+  const note = document.createElement("label");
+  note.className = "msg-note";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = isMsgIncluded(m);
+  cb.dataset.action = "toggle-note";
+  cb.dataset.msgIndex = String(index);
+  const noteTxt = document.createElement("span");
+  noteTxt.textContent = "收入笔记";
+  note.append(cb, noteTxt);
+
+  el.append(roleEl, contentEl, note);
+  return el;
+}
+
+// 卡片内输入：纯批注（不调 LLM）/ 含 @AI（召唤 AI）。流式中本卡片按钮变「停止」，其他卡片禁用。
+function buildCommentInput(comment) {
+  const form = document.createElement("form");
+  form.className = "cc-input";
+  form.dataset.commentId = comment.id;
+  const ta = document.createElement("textarea");
+  ta.rows = 1;
+  ta.placeholder = "写批注…  输入 @ 可召唤 AI";
+  const btn = document.createElement("button");
+  btn.type = "submit";
+  const streamingThis = state.streaming && state.streamingCommentId === comment.id;
+  if (streamingThis) {
+    btn.textContent = "停止";
+    btn.classList.add("stopping");
+  } else {
+    btn.textContent = "发送";
+    if (state.streaming) { ta.disabled = true; btn.disabled = true; }
+  }
+  form.append(ta, btn);
+  return form;
+}
+
+// ── comment 手风琴：展开 / 收起 / 切换 ──
+// opts.scrollPdf：是否把 PDF 滚到锚定高亮（点列表卡片 true；划线刚建 false 不跳页）
+function expandComment(id, opts) {
+  const o = opts || {};
+  // 流式中切到别的 comment → abort（回复不会落到错的卡片）
+  if (state.streaming && state.abortCtl && state.streamingCommentId !== id) {
+    state.abortCtl.abort();
+  }
+  if (state.streamError && state.streamError.commentId !== id) state.streamError = null;
+  state.expandedCommentId = id;
+  renderCommentList();
+  const card = els.commentList?.querySelector(`.cmt-card[data-comment-id="${id}"]`);
+  if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (o.scrollPdf !== false && id !== "main" && state.pdf) {
+    const ann = state.annotations.find((a) => a.id === id);
+    if (ann && ann.pages[0]) {
+      try { pdfViewer.scrollPageIntoView({ pageNumber: ann.pages[0].page }); } catch (_) {}
+      requestAnimationFrame(() => {
+        const rect = els.viewer.querySelector(`.hl-rect[data-ann-id="${id}"]`);
+        if (rect) {
+          // 让目标高亮落在视口偏上（约 28%）—— 定位到这句、继续往下读
+          const cont = els.viewerContainer;
+          const contBox = cont.getBoundingClientRect();
+          const rectBox = rect.getBoundingClientRect();
+          const target = rectBox.top - contBox.top + cont.scrollTop - contBox.height * 0.28;
+          cont.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+        }
+        flashAnnotation(id);
+      });
+    }
+  }
+}
+function collapseComment() {
+  if (state.streaming && state.abortCtl) state.abortCtl.abort();
+  state.expandedCommentId = null;
+  state.streamError = null;
+  renderCommentList();
+}
+function toggleComment(id) {
+  if (state.expandedCommentId === id) collapseComment();
+  else expandComment(id);
+}
+
+// ── 划线浮出 comment 框（A 方案：不填走掉 = 纯高亮；填了发送 = 保存）──
+// 选色建好 annotation 后浮在原文旁；用 hl-rect 的屏幕坐标定位（同旧 hl-bubble 思路）
+function showCmtCompose(annId) {
+  const rectEl = els.viewer.querySelector(`.hl-rect[data-ann-id="${annId}"]`);
+  if (!rectEl) return;        // 高亮 rect 没画出来就放弃浮框（右栏卡片仍在，不影响）
+  state.composeCommentId = annId;
+  const anchor = rectEl.getBoundingClientRect();
+  const cont = els.viewerContainer.getBoundingClientRect();
+  const BOX_W = 320, GAP = 8;
+  // 默认放高亮下方
+  let top = anchor.bottom - cont.top + els.viewerContainer.scrollTop + GAP;
+  let left = anchor.left - cont.left + els.viewerContainer.scrollLeft;
+  const maxLeft = els.viewerContainer.scrollLeft + cont.width - BOX_W - 8;
+  if (left > maxLeft) left = Math.max(8, maxLeft);
+  if (left < els.viewerContainer.scrollLeft + 8) left = els.viewerContainer.scrollLeft + 8;
+  els.cmtCompose.style.left = `${left}px`;
+  els.cmtCompose.style.top = `${top}px`;
+  els.cmtComposeInput.value = "";
+  els.cmtCompose.hidden = false;
+  autoGrow(els.cmtComposeInput);
+  els.cmtComposeInput.focus();
+}
+function hideCmtCompose() {
+  if (els.cmtCompose) els.cmtCompose.hidden = true;
+  state.composeCommentId = null;
+}
+// 浮框发送：不填走掉 = 纯高亮（annotation 已存、无 messages）；填了 = 走 @AI 路由
+function submitCmtCompose() {
+  const id = state.composeCommentId;
+  const text = (els.cmtComposeInput.value || "").trim();
+  hideCmtCompose();
+  if (!id || !text) return;
+  routeCommentInput(id, text);
+}
+
+// Block 2：往 comment 里加一条纯批注（用户消息，不调 LLM）。@AI 召唤由 Block 3 接入。
+function addBareNote(commentId, text) {
+  const t = (text || "").trim();
+  if (!t) return;
+  let thread = state.threads[commentId];
+  if (!thread && commentId !== "main") {
+    const ann = state.annotations.find((a) => a.id === commentId);
+    if (ann) thread = ensureAnnotationThread(ann);
+  }
+  if (!thread) return;
+  thread.messages.push({ role: "user", content: t, includedInNote: true });
   persistThread(thread);
-  setStreaming(true);
-  // 锁住开始 send 时的 thread —— 中途切 thread 时不会污染其他 thread
-  const sendThreadId = state.currentThreadId;
+  renderCommentList();
+}
 
-  const assistantEl = appendMsgBubble("assistant", "", true);
-  const contentEl = assistantEl.querySelector(".content");
-  contentEl.textContent = "…"; // 给个等待提示，避免完全空
-  let fullText = "";
-  state.abortCtl = new AbortController();
+// 翻转某条消息的「收入笔记」状态
+function toggleMsgIncluded(commentId, msgIndex) {
+  const thread = state.threads[commentId];
+  if (!thread || !thread.messages[msgIndex]) return;
+  const m = thread.messages[msgIndex];
+  m.includedInNote = !isMsgIncluded(m);
+  persistThread(thread);
+  renderCommentList();
+}
 
-  // v3-α: palette 规则作为 system role 第一条 prepend 到 messages
-  // server.py 不动 → server 拼出来的最终 messages = [server_system(SYSTEM_PROMPT+pdf_text), palette_system, ...thread.messages]
-  // 多 system role 是合法 OpenAI 协议（provider 会自然 concat）
-  // caching 影响：palette_system 字符串前缀稳定 → 同主题任意请求前缀字节序列一致；改 palette = 失效（合理）
-  // 注意：跨 PDF 的完整前缀命中需要 server.py 把 palette 拼到 SYSTEM_PROMPT 后、pdf_text 前才能做到；
-  //       v3-α 阶段不动 server.py，此处只保证 messages 协议正确 + system_prompt.md 的 tag 规则段被注入
-  const paletteRules = buildPaletteRules(state.topics[state.currentTopicId]?.palette);
-  const messagesWithPalette = paletteRules
-    ? [{ role: "system", content: paletteRules }, ...thread.messages]
-    : thread.messages;
+// ────────────────────── chatClient（v6 comment 模型）──────────────────────
+// 收发都基于一条 comment：thread.messages 是该 comment 的讨论历史。
+// caching：稳定大前缀 = server.py 注入的 SYSTEM_PROMPT + pdf_text + 前端 palette 规则；
+//          本 comment 上下文 = 高亮原文 system note + thread.messages。
+//          大前缀字节稳定 → comment 之间共享缓存命中（不掺时间戳/UUID）。
 
-  // v3-γ caching 验证日志：跨 PDF 同主题打开第 2 篇时，比 messages[0] 字节是否一致
-  // hash 用极简 djb2（无依赖，唯一性够给同一 session 内观察），不传上游
-  // 注意：messages[0] 在有 paletteRules 时是 palette system；无时是 thread 第一条 user
-  //   → 同主题不同 PDF 下 paletteRules 字节相同 → messages[0] 应稳定
-  //   → server.py 拼 SYSTEM_PROMPT + pdf_text 作为 server_system，是另一层 caching 前缀（不在前端 hash 范围）
-  // 开启方式：window.__coreadCachingDebug = true（默认开，关掉用 false）
-  if (window.__coreadCachingDebug !== false && messagesWithPalette[0]) {
-    const m0 = messagesWithPalette[0];
-    const s = (m0.role || "") + "|" + (typeof m0.content === "string" ? m0.content : JSON.stringify(m0.content));
-    let h = 5381;
-    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-    const hashHex = (h >>> 0).toString(16).padStart(8, "0");
-    console.debug(
-      "[v3-γ caching] messages[0]",
-      "role=" + m0.role,
-      "len=" + s.length,
-      "hash=" + hashHex,
-      "topic=" + (state.currentTopicId || "?")
-    );
+// @AI 默认问题（用户只打 @AI 不带问题时）
+function defaultQuestion(commentId) {
+  return commentId === "main"
+    ? `请给这篇论文一个 100 字以内的${PRIME_KEYWORD}（What / Why / How / Result）。`
+    : "请帮我解读这段划线原文。";
+}
+
+// comment 输入路由：含 @AI → 召唤 AI；否则 → 纯批注。compose 框与卡片输入共用。
+function routeCommentInput(commentId, text) {
+  const t = (text || "").trim();
+  if (!t) return;
+  state.streamError = null;
+  state.expandedCommentId = commentId; // 确保结果在右栏可见
+  if (/@ai/i.test(t)) {
+    const q = t.replace(/@ai/ig, "").trim();
+    sendToComment(commentId, q || defaultQuestion(commentId));
+  } else {
+    addBareNote(commentId, t);
   }
+}
 
+// 把一条问题发给某条 comment 的 AI。用户消息 + AI 回复都进 thread.messages，
+// 流式渲染进右栏展开卡片里的 .msg.assistant.streaming 占位气泡。
+async function sendToComment(commentId, question) {
+  if (state.streaming) return;
+  const q = (question || "").trim();
+  if (!q) return;
+  let thread = state.threads[commentId];
+  if (!thread && commentId !== "main") {
+    const ann = state.annotations.find((a) => a.id === commentId);
+    if (ann) thread = ensureAnnotationThread(ann);
+  }
+  if (!thread) return;
+
+  // 用户消息入 thread（带当前页标签，给 AI 做 〔p.N〕 引用；显示时 _stripPageTag 去掉）
+  thread.messages.push({
+    role: "user",
+    content: `[CURRENT_PAGE: ${state.currentPage}]\n${q}`,
+    includedInNote: true,
+  });
+  persistThread(thread);
+
+  // 进入流式态 + 展开该 comment → renderCommentList 渲出空的 streaming 气泡
+  state.streaming = true;
+  state.streamingCommentId = commentId;
+  state.streamError = null;
+  state.expandedCommentId = commentId;
+  state.abortCtl = new AbortController();
+  renderCommentList();
+
+  // 流式目标：展开卡片里 .msg.assistant.streaming 的 .content（每次重新查，防 DOM 被重建）
+  const findContentEl = () => {
+    const card = els.commentList?.querySelector(`.cmt-card[data-comment-id="${commentId}"]`);
+    return card ? card.querySelector(".msg.assistant.streaming .content") : null;
+  };
+  const c0 = findContentEl();
+  if (c0) c0.textContent = "…";
+
+  // ── 拼 LLM 请求：palette 规则 + 高亮原文 system note + thread.messages ──
+  const paletteRules = buildPaletteRules(state.topics[state.currentTopicId]?.palette);
+  const sys = [];
+  if (paletteRules) sys.push({ role: "system", content: paletteRules });
+  const ann = state.annotations.find((a) => a.id === commentId);
+  if (ann) {
+    sys.push({
+      role: "system",
+      content: `用户正在讨论第 ${annPageLabel(ann)} 的一段划线原文：\n"""${ann.text}"""\n回答请围绕这段原文。`,
+    });
+  }
+  const messagesForLLM = [...sys, ...thread.messages];
+
+  let fullText = "";
   try {
     const r = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: messagesWithPalette,
-        pdf_text: state.pdfText,
-      }),
+      body: JSON.stringify({ messages: messagesForLLM, pdf_text: state.pdfText }),
       signal: state.abortCtl.signal,
     });
-
-    // HTTP 层错误（4xx/5xx）
     if (!r.ok) {
       const errBody = await r.text();
       throw new Error(extractErrorMessage(errBody) || `HTTP ${r.status}`);
     }
-
     const reader = r.body.getReader();
     const decoder = new TextDecoder();
-    let buf = "";
-    let sawAnySSE = false;
-    let rawAll = "";
+    let buf = "", sawAnySSE = false, rawAll = "";
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -1856,89 +2098,53 @@ async function sendMessage(userText) {
       buf = lines.pop();
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed) continue;
-        if (!trimmed.startsWith("data:")) continue;
+        if (!trimmed || !trimmed.startsWith("data:")) continue;
         sawAnySSE = true;
         const data = trimmed.slice(5).trim();
         if (data === "[DONE]") continue;
         try {
           const j = JSON.parse(data);
-          // 上游 provider 偶尔会在 200 流里夹错误对象
           if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
           const delta = j.choices?.[0]?.delta?.content || "";
           if (delta) {
             fullText += delta;
-            renderAssistant(contentEl, fullText);
-            els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+            const el = findContentEl();
+            if (el) renderAssistant(el, fullText);
           }
         } catch (e) {
-          // 单行 JSON 解析失败可能是分片，继续。但 e 是抛 Error（带 message）则上抛
+          // 单行 JSON 解析失败多半是分片，继续；真 Error 上抛
           if (e instanceof Error && e.message && !e.message.startsWith("Unexpected")) throw e;
         }
       }
     }
-
-    // 整个流都没看到 SSE 行 → 上游返回的不是流（多半是错误 JSON）
-    if (!sawAnySSE) {
-      const msg = extractErrorMessage(rawAll) || "上游返回的不是流式响应。";
-      throw new Error(msg);
-    }
-
-    if (!fullText.trim()) {
-      throw new Error("上游返回空内容（可能被安全过滤或额度耗尽）。");
-    }
-
-    // 写回**发起 send 时锁定**的 thread（thread 可能已被切走 / 删除）
-    const tgt = state.threads[sendThreadId];
-    if (tgt) {
-      tgt.messages.push({ role: "assistant", content: fullText });
-      // v3-δ：assistant 完成 → 持久化
-      persistThread(tgt);
-    }
+    if (!sawAnySSE) throw new Error(extractErrorMessage(rawAll) || "上游返回的不是流式响应。");
+    if (!fullText.trim()) throw new Error("上游返回空内容（可能被安全过滤或额度耗尽）。");
+    thread.messages.push({ role: "assistant", content: fullText, includedInNote: true });
+    persistThread(thread);
   } catch (e) {
-    const tgt = state.threads[sendThreadId];
     if (e.name === "AbortError") {
-      renderAssistant(contentEl, fullText + "\n\n_（已中止）_");
-      if (tgt) {
-        if (fullText) {
-          tgt.messages.push({ role: "assistant", content: fullText });
-        } else {
-          // 首 token 前就 abort：没收到任何 assistant 内容 → user 消息也回滚
-          // 否则下次发送会出现 [..., user, user] 违反 OpenAI 协议
-          tgt.messages.pop();
-        }
-        // v3-δ：abort 后也要 persist（user 留 / user 回滚 / 半成品 assistant 都有可能）
-        persistThread(tgt);
+      // 中止：有半成品就留下（标注已中止），没有就只留用户消息
+      if (fullText) {
+        thread.messages.push({ role: "assistant", content: fullText + "\n\n_（已中止）_", includedInNote: true });
+        persistThread(thread);
       }
     } else {
-      console.error("[sendMessage]", e);
-      contentEl.innerHTML = "";
-      const errEl = document.createElement("div");
-      errEl.className = "err";
-      // v3-fixup-2: 上游错误体可能是一坨 HTML（如 502 Bad Gateway 的 nginx 错误页 / Cloudflare 拦截页），
-      // 直接 textContent 进 bubble 虽不会渲染但显示为长串字符串吓人。
-      // 策略：长 > 200 字符 或 看起来含 HTML tag（"<x" 模式）→ 截断 + 友好提示，原文 console.warn。
-      // trade-off：代码字符串 "if (x < y)" 也会命中"含 <"，但只影响显示策略不影响功能，可接受。
+      console.error("[sendToComment]", e);
       const rawMsg = String(e.message || e);
       const looksLikeHtml = /<[a-zA-Z!\/]/.test(rawMsg);
       if (rawMsg.length > 200 || looksLikeHtml) {
-        console.warn("[sendMessage] 上游原始错误内容（已截断显示）:", rawMsg);
-        errEl.textContent = "⚠ 上游返回格式异常（详情见 console）";
+        console.warn("[sendToComment] 上游原始错误内容:", rawMsg);
+        state.streamError = { commentId, text: "⚠ 上游返回格式异常（详情见 console）" };
       } else {
-        errEl.textContent = `⚠ ${rawMsg}`;
+        state.streamError = { commentId, text: `⚠ ${rawMsg}` };
       }
-      contentEl.appendChild(errEl);
-      // 失败的 user 消息也回滚，避免下次请求重复带上失败 turn
-      if (tgt) {
-        tgt.messages.pop();
-        persistThread(tgt);
-      }
+      // 用户消息保留 —— 它本身是一条合法批注；错误提示渲染在卡片里
     }
   } finally {
-    assistantEl.classList.remove("streaming");
-    setStreaming(false);
+    state.streaming = false;
+    state.streamingCommentId = null;
     state.abortCtl = null;
-    updateThreadSummary();
+    renderCommentList();
   }
 }
 
@@ -1979,8 +2185,8 @@ function extractErrorMessage(raw) {
 const PRIME_KEYWORD = "核心总结";
 
 async function primeSummary() {
-  // 文案里必须含 PRIME_KEYWORD（"核心总结"），见 maybePrimeSummary 检测逻辑
-  await sendMessage(`请给这篇论文一个 100 字以内的${PRIME_KEYWORD}（What / Why / How / Result）。`);
+  // 自动总结进「全文 comment」(main)。文案含 PRIME_KEYWORD（见 defaultQuestion），供 maybePrimeSummary 检测
+  await sendToComment("main", defaultQuestion("main"));
 }
 
 // v3-fixup #1: prime 重复触发修
@@ -2004,25 +2210,7 @@ async function maybePrimeSummary() {
 }
 
 // ────────────────────── UI 工具 ──────────────────────
-function appendMsgBubble(role, content, streaming = false) {
-  const el = document.createElement("div");
-  el.className = `msg ${role}` + (streaming ? " streaming" : "");
-
-  const roleEl = document.createElement("div");
-  roleEl.className = "role";
-  roleEl.textContent = role === "user" ? "你" : "Agent";
-
-  const contentEl = document.createElement("div");
-  contentEl.className = "content";
-  if (role === "assistant") renderAssistant(contentEl, content);
-  else contentEl.textContent = content;
-
-  el.appendChild(roleEl);
-  el.appendChild(contentEl);
-  els.chatMessages.appendChild(el);
-  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
-  return el;
-}
+// v6：appendMsgBubble 已退休 —— 消息渲染见 buildMessageEl（comment 卡片内）
 
 function renderAssistant(el, text) {
   if (!text) { el.textContent = ""; return; }
@@ -2087,6 +2275,7 @@ function _hideAllViews() {
   els.landing.classList.remove("active");
   els.topicPage.classList.remove("active");
   els.reader.classList.remove("active");
+  if (els.exportPage) els.exportPage.classList.remove("active");
 }
 // 首页：粘贴链接直接读 —— 极简入口，主题管理后置
 function switchToHome() {
@@ -2171,6 +2360,8 @@ function switchToReader() {
   setLandingStatus("");
   // v3-γ：切到 reader 时按当前主题重渲色板（loadPdf 已经在切完后再渲一次，这里是兜底入口）
   renderColorPalette();
+  // v6：右栏 comment 列表兜底渲染（loadPdf hydration 会再渲一次）
+  renderCommentList();
 }
 // 阅读页 "←" 回主题页（不是 landing）—— 由 readerFromTopicId 决定
 function switchToLanding() {
@@ -2194,14 +2385,17 @@ function resetReaderState() {
   state.pdfKey = "";
   state.annotations = [];
   resetThreads();   // 重置成只有空 main thread
+  // v6：重置 comment 列表 + 流式 + 浮框 UI 状态
+  state.expandedCommentId = null;
+  state.cmtShowAll.clear();
+  state.streamingCommentId = null;
+  state.streamError = null;
+  state.streaming = false;
+  if (els.commentList) els.commentList.replaceChildren();
   if (state.abortCtl) state.abortCtl.abort();
-  els.chatMessages.replaceChildren();
-  // 隐藏色板/气泡 + thread list + 清掉 viewer 残留的高亮 DOM（setDocument(null) 之前先擦干净）
+  // 隐藏色板 + 浮出 comment 框 + 清掉 viewer 残留的高亮 DOM
   hideColorPalette();
-  hideHlBubble();
-  closeThreadList();
-  // v3-polish-2 #3：离开 reader 清掉 pending quote chip（避免跨 PDF 残留）
-  clearPendingQuote();
+  hideCmtCompose();
   // 把 viewer 清空：setDocument(null) 让 viewer 内部销毁 PDFPageView、释放 canvas
   // 注意：必须在 viewer 已经 init 过的前提下才安全
   try {
@@ -2219,7 +2413,7 @@ function resetReaderState() {
   // v5：收起搜索结果下拉（避免跨 PDF 残留旧结果）
   hideFindDropdown();
   els.pageInfo.textContent = "- / -";
-  els.threadSummary.textContent = "⊳ 准备中…";
+  if (els.cmtSummary) els.cmtSummary.textContent = "⊳ 准备中…";
   els.pdfTitle.textContent = "";
   els.readerTopicHint.textContent = "";
 }
@@ -2231,154 +2425,10 @@ function setLandingStatus(text, isError = false) {
   els.landingStatus.classList.toggle("error", !!isError);
 }
 
-function setStreaming(on) {
-  state.streaming = on;
-  // 流式中：按钮变 ⏹ 停止键、保持可点击；textarea disabled 防止 ⌘+Enter 重发
-  // 非流式：按钮恢复 ↵ 发送键
-  els.sendBtn.textContent = on ? "⏹" : "↵";
-  els.sendBtn.title = on ? "停止生成" : "发送";
-  els.sendBtn.setAttribute("aria-label", on ? "停止生成" : "发送");
-  els.sendBtn.disabled = false; // 始终可点击；流式时点击 = abort
-  els.sendBtn.classList.toggle("stopping", on);
-  els.chatInput.disabled = on;
-}
+// v6：setStreaming 已退休 —— 流式态由 sendToComment 直接管 state.streaming，
+//     按钮态在 buildCommentInput 里按 state.streamingCommentId 渲染
 
-function updateThreadSummary() {
-  const cur = getCurrentThread();
-  // 计数口径与 thread 列表一致：只算 main + 聊过的高亮
-  const n = Object.keys(state.threads)
-    .filter((id) => id === "main" || state.threads[id].messages.length > 0).length;
-  // v3-polish #7：用 displayThreadLabel（customName 优先）
-  els.threadSummary.textContent = `⊳ ${n} 个对话 · 当前：${displayThreadLabel(cur)}`;
-  els.threadSummary.title = `点击切换对话（共 ${n} 个）`;
-  // 若 thread list 正展开 → 同步重渲染（轮数 / label 可能变了）
-  if (!els.threadList.hidden) renderThreadList();
-}
-
-// 渲染 thread list（按 createdAt 升序，main 永远第一）
-// v3-polish #7：每个 thread 旁加"✎"重命名按钮（行内编辑）；main / annotation thread 都允许改名
-function renderThreadList() {
-  els.threadList.replaceChildren();
-  // 只列「main」+「真正聊过的高亮」（messages 非空）。
-  // 纯标记高亮安静待在 PDF 上、进导出笔记，但不占对话列表（"用了才算对话"）。
-  const ids = Object.keys(state.threads)
-    .filter((id) => id === "main" || state.threads[id].messages.length > 0)
-    .sort((a, b) => {
-      if (a === "main") return -1;
-      if (b === "main") return 1;
-      return state.threads[a].createdAt - state.threads[b].createdAt;
-    });
-  for (const id of ids) {
-    const t = state.threads[id];
-    // 用 div 包装（之前是 <button>，要在里面再放 button 会嵌套违法）
-    const item = document.createElement("div");
-    item.className = "thread-list-item" + (id === state.currentThreadId ? " active" : "");
-    item.dataset.threadId = id;
-    item.setAttribute("role", "option");
-    item.setAttribute("aria-selected", id === state.currentThreadId ? "true" : "false");
-    item.tabIndex = 0;
-
-    const label = document.createElement("span");
-    label.className = "tl-label";
-    label.textContent = displayThreadLabel(t);
-    // 若有 customName，把自动 label 作为 tooltip 提示原始锚定信息（p.5 · 🔴）
-    if ((t.customName || "").trim()) {
-      label.title = `${displayThreadLabel(t)}（${t.label}）`;
-    } else {
-      label.title = displayThreadLabel(t);
-    }
-
-    const meta = document.createElement("span");
-    meta.className = "tl-meta";
-    // 一轮 = 一对 user+assistant；不精确没关系，给个感觉
-    const rounds = Math.ceil(t.messages.length / 2);
-    meta.textContent = `${rounds} 轮`;
-
-    // v3-polish #7：行内重命名按钮（点击不切 thread，停止冒泡）
-    const renameBtn = document.createElement("button");
-    renameBtn.type = "button";
-    renameBtn.className = "tl-rename";
-    renameBtn.dataset.action = "rename";
-    renameBtn.textContent = "✎";
-    renameBtn.setAttribute("aria-label", "重命名对话");
-    renameBtn.title = "重命名对话";
-
-    item.appendChild(label);
-    item.appendChild(meta);
-    item.appendChild(renameBtn);
-    els.threadList.appendChild(item);
-  }
-}
-
-// v3-polish #7：行内重命名 thread —— 把 .tl-label 替换为 input
-function startEditThreadLabel(threadId, itemEl) {
-  const t = state.threads[threadId];
-  if (!t || !itemEl) return;
-  const labelEl = itemEl.querySelector(".tl-label");
-  if (!labelEl) return;
-  // 已经在编辑 → 不重入
-  if (itemEl.querySelector(".tl-label-input")) return;
-  // 编辑种子：优先 customName（用户可继续改），没有就用自动 label 当起点
-  const seed = (t.customName || "").trim() || t.label || "";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = "tl-label-input";
-  input.value = seed;
-  input.maxLength = 30;
-  input.setAttribute("aria-label", "重命名对话");
-
-  // 替换 label
-  labelEl.replaceWith(input);
-  input.focus();
-  input.select();
-
-  let finished = false;
-  const commit = (save) => {
-    if (finished) return;
-    finished = true;
-    if (save) {
-      const next = input.value.trim().slice(0, 30);
-      // 空 → 视为清除 customName，回退到自动 label（"重置成默认名"动作）
-      t.customName = next;
-      // 持久化（fire-and-forget）
-      persistThread(t);
-    }
-    // 重渲染整个 list（最简单，避免手工恢复 DOM 失败）
-    renderThreadList();
-    updateThreadSummary();
-  };
-
-  input.addEventListener("keydown", (e) => {
-    if (e.isComposing) return;
-    if (e.key === "Enter") {
-      e.preventDefault();
-      commit(true);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      commit(false);
-    }
-    // 防止上下方向键被外层捕获
-    e.stopPropagation();
-  });
-  input.addEventListener("blur", () => commit(true));
-  // input 上点击不要触发 item 切 thread
-  input.addEventListener("click", (e) => e.stopPropagation());
-  input.addEventListener("mousedown", (e) => e.stopPropagation());
-}
-
-function openThreadList() {
-  renderThreadList();
-  els.threadList.hidden = false;
-  els.threadSummary.setAttribute("aria-expanded", "true");
-}
-function closeThreadList() {
-  els.threadList.hidden = true;
-  els.threadSummary.setAttribute("aria-expanded", "false");
-}
-function toggleThreadList() {
-  if (els.threadList.hidden) openThreadList();
-  else closeThreadList();
-}
+// v6：thread 切换器 / thread list / 行内重命名 已退休 —— 右栏改为 comment 列表（见 renderCommentList）
 
 // ────────────────────── v3-β 主题 UI ──────────────────────
 // 三层视图：topicList (landing) / topicPage / reader
@@ -2475,7 +2525,7 @@ function buildTopicCard(topic) {
     const sw = document.createElement("span");
     sw.className = "tc-swatch";
     sw.style.background = p.color;
-    sw.title = `${p.emoji} ${p.label}`;
+    sw.title = p.label;
     pal.appendChild(sw);
   }
 
@@ -2540,12 +2590,16 @@ function renderTopicPage(topic) {
   els.tpName.textContent = topic.name;
   // palette 行（只读小标签）
   els.tpPaletteRow.replaceChildren();
-  // emoji 自带颜色，不再额外画色块（与 emoji 重复）
   for (const p of (topic.palette || [])) {
     const tag = document.createElement("span");
     tag.className = "tp-tag";
-    tag.textContent = `${p.emoji} ${p.label}`;
     tag.title = "主题创建后色板不可修改";
+    const sw = document.createElement("span");
+    sw.className = "tp-tag-swatch";
+    sw.style.background = p.color || "#b8b8b8";
+    const lb = document.createElement("span");
+    lb.textContent = p.label;
+    tag.append(sw, lb);
     els.tpPaletteRow.appendChild(tag);
   }
   // 回到主题页时让 URL 输入框聚焦（首篇 → 引导加论文）
@@ -2655,15 +2709,9 @@ function updateReaderTopicHint() {
     return;
   }
   els.readerTopicHint.textContent = topic.name;
-  // v3-polish #5：默认主题不可改名；非默认主题点击进入 inline edit
-  const editable = topic.id !== DEFAULT_TOPIC_ID;
-  if (editable) {
-    els.readerTopicHint.setAttribute("data-editable", "1");
-    els.readerTopicHint.title = `点击重命名（当前：${topic.name}）`;
-  } else {
-    els.readerTopicHint.removeAttribute("data-editable");
-    els.readerTopicHint.title = `当前主题：${topic.name}（默认主题不可改名）`;
-  }
+  // 任何主题（含默认）点击都可 inline 改名
+  els.readerTopicHint.setAttribute("data-editable", "1");
+  els.readerTopicHint.title = `点击重命名（当前：${topic.name}）`;
 }
 
 // v3-polish #5：reader 顶栏主题名 inline 重命名
@@ -2672,7 +2720,7 @@ let _topicHintEditing = false;
 function startEditReaderTopicHint() {
   if (_topicHintEditing) return;
   const topic = state.topics[state.currentTopicId];
-  if (!topic || topic.id === DEFAULT_TOPIC_ID) return;
+  if (!topic) return;
   _topicHintEditing = true;
   const oldName = topic.name;
   const input = document.createElement("input");
@@ -2706,6 +2754,57 @@ function startEditReaderTopicHint() {
     // 任何持有该 topic.name 引用的 UI 都需要刷一遍
     updateReaderTopicHint();
     // 主题列表（landing）/ 主题页头 / pdf title hint 等下次进入时由各自 render 读 topic.name 即可
+  };
+
+  input.addEventListener("keydown", (e) => {
+    if (e.isComposing) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit(true);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      commit(false);
+    }
+  });
+  input.addEventListener("blur", () => commit(true));
+}
+
+// 主题页大标题 #tpName inline 重命名（复用 renameTopic，默认主题也可改）
+// 点标题 → input；Enter / blur 保存；ESC 取消
+let _tpNameEditing = false;
+function startEditTpName(topicId) {
+  if (_tpNameEditing) return;
+  const topic = state.topics[topicId];
+  if (!topic) return;
+  _tpNameEditing = true;
+  const oldName = topic.name;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "tp-name-input";
+  input.value = oldName;
+  input.maxLength = 30;
+  input.setAttribute("aria-label", "重命名主题");
+  els.tpName.textContent = "";
+  els.tpName.appendChild(input);
+  input.focus();
+  input.select();
+
+  let finished = false;
+  const commit = async (save) => {
+    if (finished) return;
+    finished = true;
+    _tpNameEditing = false;
+    const nextName = input.value.trim().slice(0, 30);
+    if (!save || !nextName || nextName === oldName) {
+      els.tpName.textContent = topic.name;
+      return;
+    }
+    try {
+      await renameTopic(topicId, nextName);
+    } catch (e) {
+      console.warn("[renameTopic]", e);
+    }
+    els.tpName.textContent = topic.name;
   };
 
   input.addEventListener("keydown", (e) => {
@@ -2759,9 +2858,8 @@ async function createTopic({ name, palette }) {
   return topic;
 }
 
-// 重命名（默认主题禁止）
+// 重命名（默认主题也允许改名；"不可删除"限制保留）
 async function renameTopic(id, newName) {
-  if (id === DEFAULT_TOPIC_ID) return;
   const topic = state.topics[id];
   if (!topic) return;
   topic.name = (newName || "").trim() || topic.name;
@@ -2885,141 +2983,152 @@ function _formatStamp(d) {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 }
 
-async function generateMarkdownExport(topicId) {
+// ── v6 导出：收入笔记的内容，按标签归类 ──────────────────────
+// 一条 comment 的消息里，只有 includedInNote !== false 的进导出（用户可逐条取消）。
+// 高亮原文（annotation.text）是 comment 的锚，始终导出 —— 划线本身就是一种标记。
+
+// 把一组 messages 里「收入笔记」的渲染成导出行
+function _exportMsgLines(messages) {
+  const out = [];
+  for (const m of (messages || [])) {
+    if (!isMsgIncluded(m)) continue;
+    const role = m.role === "user" ? "**你**" : "**Agent**";
+    const content = (m.role === "user" ? _stripPageTag(m.content) : (m.content || "")).trim();
+    if (!content) continue;
+    out.push(`${role}：${content}`, "");
+  }
+  return out;
+}
+
+// comment 级是否收入笔记 —— annotation.includedInNote 缺字段视为 true
+function isAnnIncluded(ann) {
+  return !!ann && ann.includedInNote !== false;
+}
+
+// 一条 annotation 的导出行（原文引用 + 收入的消息）
+function _exportCommentLines(ann, getThread) {
+  const out = [];
+  const quote = (ann.text || "").replace(/\s+/g, " ").trim();
+  out.push(`> "${quote}" — ${annPageLabel(ann)}`, "");
+  out.push(..._exportMsgLines((getThread(ann.id) || {}).messages));
+  return out;
+}
+
+// 构建单篇 PDF 的笔记段落：全文导读 + 高亮 comment
+//   anns: 该 PDF 的 annotation 数组；getThread(id) → thread；palette: 主题色板
+//   groupMode: "tag"（按标签归类）/ "reading"（按创建时间平铺）
+function buildPdfNoteSection(anns, getThread, palette, groupMode = "tag") {
+  const lines = [];
+  // 1. 全文导读（main comment）—— 有收入笔记的消息才出小节
+  const mainMsgs = _exportMsgLines((getThread("main") || {}).messages);
+  if (mainMsgs.length) lines.push("### 📄 全文导读", "", ...mainMsgs);
+
+  // 高亮 comment：过滤掉整条取消（ann.includedInNote === false）的
+  const included = (anns || []).filter(isAnnIncluded);
+
+  if (groupMode === "reading") {
+    // 按创建时间（页码近似）平铺，不分组
+    const sorted = [...included].sort(
+      (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+    );
+    if (sorted.length) lines.push("### 划线笔记", "");
+    for (const ann of sorted) {
+      lines.push(..._exportCommentLines(ann, getThread));
+    }
+  } else {
+    // 按标签归类（palette 顺序；色不在 palette → 末尾「其它」）
+    const groups = (palette || []).map((tag) => ({ tag, anns: [] }));
+    const other = { tag: null, anns: [] };
+    for (const ann of included) {
+      const g = groups.find((x) => x.tag.id === ann.color);
+      (g || other).anns.push(ann);
+    }
+    for (const g of [...groups, other]) {
+      if (g.anns.length === 0) continue;
+      lines.push(`### ${g.tag ? `${g.tag.emoji} ${g.tag.label}` : "其它"}`, "");
+      const sorted = [...g.anns].sort(
+        (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+      );
+      for (const ann of sorted) {
+        lines.push(..._exportCommentLines(ann, getThread));
+      }
+    }
+  }
+  if (lines.length === 0) lines.push("_（暂无笔记 —— 划线标记或 @AI 讨论后再导出）_", "");
+  return lines;
+}
+
+function _exportHeader(title, sub, palette) {
+  const lines = [`# ${title}`, ""];
+  const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+  lines.push(`> 导出时间 ${now} · ${sub}`, "");
+  if (palette && palette.length) {
+    lines.push(`> 标签：${palette.map((p) => `${p.emoji} ${p.label}`).join(" / ")}`, "");
+  }
+  lines.push("---", "");
+  return lines;
+}
+
+// 导出整个主题（主题页底部按钮）—— 从 IDB 逐篇读
+//   groupMode: "tag" / "reading"
+async function generateMarkdownExport(topicId, groupMode = "tag") {
   const topic = state.topics[topicId];
   if (!topic) throw new Error("主题不存在");
   const pdfKeys = topic.pdfKeys || [];
   const palette = topic.palette || [];
-
-  const lines = [];
-  const now = new Date();
-  // 头部
-  lines.push(`# 主题: ${topic.name}`);
-  lines.push("");
-  lines.push(`> 导出时间: ${now.toISOString().slice(0, 16).replace("T", " ")}`);
-  // palette 一行展示
-  if (palette.length > 0) {
-    const paletteLine = palette.map((p) => `${p.emoji} ${p.label}`).join(" / ");
-    lines.push(`> Palette: ${paletteLine}`);
-  }
-  lines.push("");
-  lines.push("---");
-  lines.push("");
-
+  const subGroup = groupMode === "reading" ? "按阅读顺序" : "按标签归类";
+  const lines = _exportHeader(`主题笔记：${topic.name}`, `收入笔记的内容，${subGroup}`, palette);
   if (pdfKeys.length === 0) {
     lines.push("_（主题里还没有论文）_");
     return lines.join("\n");
   }
-
-  for (let i = 0; i < pdfKeys.length; i++) {
-    const pdfKey = pdfKeys[i];
-    const title = deriveTitleFromPdfKey(pdfKey);
-    lines.push(`## 📄 PDF ${i + 1}: ${title}`);
-    lines.push("");
-
-    // 拉 annotations + threads
-    let anns = [];
-    let threadRecs = [];
-    try {
-      anns = await loadAnnotations(pdfKey) || [];
-      // 仅保留属于该 topic 的 ann（同一 pdfKey 可能跨主题）
-      anns = anns.filter((a) => !a.topicId || a.topicId === topicId);
-    } catch (e) {
-      console.warn("[generateMarkdownExport] loadAnnotations", pdfKey, e);
-      lines.push("_（annotation 数据读取失败）_");
-      lines.push("");
-    }
-    try {
-      threadRecs = await loadThreadsByPdfKey(pdfKey) || [];
-      threadRecs = threadRecs.filter((t) => !t.topicId || t.topicId === topicId);
-    } catch (e) {
-      console.warn("[generateMarkdownExport] loadThreadsByPdfKey", pdfKey, e);
-    }
-
-    // 主对话
-    const mainThread = threadRecs.find((t) => t.id === "main");
-    lines.push("### 主对话（不绑高亮）");
-    lines.push("");
-    if (!mainThread || !mainThread.messages || mainThread.messages.length === 0) {
-      lines.push("_（无对话）_");
-      lines.push("");
+  for (const pdfKey of pdfKeys) {
+    lines.push(`## 📄 ${deriveTitleFromPdfKey(pdfKey)}`, "");
+    // 当前在读那一篇：用内存 state（反映屏幕上最新勾选）；其余篇：从 IDB 读
+    let anns, getThread;
+    if (pdfKey === state.pdfKey) {
+      anns = (state.annotations || []).filter((a) => !a.topicId || a.topicId === topicId);
+      getThread = (id) => state.threads[id];
     } else {
-      for (const m of mainThread.messages) {
-        const role = m.role === "user" ? "**你**" : "**Agent**";
-        const content = m.role === "user" ? _stripPageTag(m.content) : (m.content || "");
-        lines.push(`${role}: ${content}`);
-        lines.push("");
+      let threadRecs = [];
+      anns = [];
+      try {
+        anns = (await loadAnnotations(pdfKey) || []).filter((a) => !a.topicId || a.topicId === topicId);
+      } catch (e) {
+        console.warn("[generateMarkdownExport] loadAnnotations", pdfKey, e);
+        lines.push("_（annotation 数据读取失败）_", "");
       }
+      try {
+        threadRecs = (await loadThreadsByPdfKey(pdfKey) || []).filter((t) => !t.topicId || t.topicId === topicId);
+      } catch (e) {
+        console.warn("[generateMarkdownExport] loadThreadsByPdfKey", pdfKey, e);
+      }
+      const tmap = new Map(threadRecs.map((t) => [t.id, t]));
+      getThread = (id) => tmap.get(id);
     }
-
-    // 高亮 thread：按 annotation 列表顺序（按 createdAt 升序更稳，与时间线一致）
-    const annsByCreatedAsc = [...anns].sort((a, b) => {
-      const ta = new Date(a.createdAt || 0).getTime();
-      const tb = new Date(b.createdAt || 0).getTime();
-      return ta - tb;
-    });
-    annsByCreatedAsc.forEach((ann, idx) => {
-      const pages = ann.pages || [];
-      const pageNums = pages.map((p) => p.page);
-      const pageLabel = pageNums.length === 0
-        ? "p.?"
-        : pageNums.length === 1
-          ? `p.${pageNums[0]}`
-          : `p.${pageNums[0]}-${pageNums[pageNums.length - 1]}`;
-      // 找 palette tag（用 ann.color 当 palette.id）
-      const tag = palette.find((p) => p.id === ann.color);
-      const tagLabel = tag ? `${tag.emoji} ${tag.label}` : (ann.color || "");
-      // v3-polish #7：若用户给本 thread 起了名（customName），在小标题里显式带上
-      const annThread = threadRecs.find((x) => x.id === ann.id);
-      const customName = (annThread?.customName || "").trim();
-      const head = customName
-        ? `### 高亮 ${idx + 1} · ${customName} (${pageLabel} · ${tagLabel})`
-        : `### 高亮 ${idx + 1} (${pageLabel} · ${tagLabel})`;
-      lines.push(head);
-      lines.push("");
-      // 引用原文
-      const quote = (ann.text || "").replace(/\s+/g, " ").trim();
-      if (quote) {
-        // 多行 quote 也按一行展开（markdown blockquote 单行更稳；前端选段已是单行连缀）
-        lines.push(`> "${quote}"`);
-        lines.push("");
-      }
-      // 对话（聊过才有）；纯标记高亮只保留上面的引用原文，不写"（无对话）"
-      const t = threadRecs.find((x) => x.id === ann.id);
-      if (t && t.messages && t.messages.length > 0) {
-        for (const m of t.messages) {
-          const role = m.role === "user" ? "**你**" : "**Agent**";
-          const content = m.role === "user" ? _stripPageTag(m.content) : (m.content || "");
-          lines.push(`${role}: ${content}`);
-          lines.push("");
-        }
-      }
-    });
-
-    lines.push("---");
-    lines.push("");
+    lines.push(...buildPdfNoteSection(anns, getThread, palette, groupMode));
+    lines.push("---", "");
   }
-
   return lines.join("\n");
 }
 
-// 触发浏览器下载
-async function downloadTopicMarkdown(topicId) {
-  const topic = state.topics[topicId];
-  if (!topic) return;
-  let md;
-  try {
-    md = await generateMarkdownExport(topicId);
-  } catch (e) {
-    console.error("[downloadTopicMarkdown]", e);
-    setTpStatus(`导出失败：${e.message || e}`, true);
-    return;
-  }
-  const stamp = _formatStamp(new Date());
-  const fname = `${_safeFileName(topic.name)}-${stamp}.md`;
+// 导出当前阅读的这一篇（reader 顶栏按钮）—— 直接用内存 state，反映屏幕上的最新勾选
+function generateCurrentPdfMarkdown(groupMode = "tag") {
+  const topic = state.topics[state.currentTopicId];
+  const palette = topic ? topic.palette || [] : [];
+  const title = state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || "笔记";
+  const subGroup = groupMode === "reading" ? "按阅读顺序" : "按标签归类";
+  const sub = `${topic ? `主题 ${topic.name} · ` : ""}收入笔记的内容，${subGroup}`;
+  const lines = _exportHeader(`笔记：${title}`, sub, palette);
+  lines.push(...buildPdfNoteSection(state.annotations, (id) => state.threads[id], palette, groupMode));
+  return lines.join("\n");
+}
+
+// 触发浏览器下载一段文本为 .md 文件（topic / 当前篇导出共用）
+function _downloadBlob(text, fname) {
   let url = null;
   try {
-    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
     url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -3027,14 +3136,396 @@ async function downloadTopicMarkdown(topicId) {
     document.body.appendChild(a);
     a.click();
     a.remove();
-  } catch (e) {
-    console.error("[downloadTopicMarkdown] blob/download", e);
-    setTpStatus(`下载失败：${e.message || e}`, true);
   } finally {
-    if (url) {
-      // 给浏览器一点时间触发下载，再 revoke
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    // 给浏览器一点时间触发下载，再 revoke
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+}
+
+// ────────────────────── 导出页 ──────────────────────
+// 设计：复用 includedInNote 数据 —— 不另搞导出专属选择。
+//   - message.includedInNote（已存在）；annotation.includedInNote（新增字段，缺 = true）
+//   - 标签级 = 纯派生批量开关
+// 范围 current：当前篇，直接用内存 state（实时、可编辑）。
+// 范围 topic：当前篇用 state；其余 pdfKey 载入成「可编辑工作集」（annsByKey/threadsByKey），
+//   勾选改动写回该工作集 + saveAnnotations / saveThread 持久化。
+const exportState = {
+  fromView: "reader",   // 来时的视图："reader" / "topicPage"
+  topicId: "default",
+  scope: "current",     // "current" / "topic"
+  group: "tag",         // "tag" / "reading"
+  hasCurrent: false,    // 是否有「当前在读的篇」
+  // topic 范围的非当前篇工作集
+  annsByKey: {},        // pdfKey → annotation[]
+  threadsByKey: {},     // pdfKey → Map(threadId → threadRecord)
+};
+
+// 进入导出页。opts.from = "reader" / "topicPage"
+async function switchToExportPage(opts = {}) {
+  if (state.abortCtl) state.abortCtl.abort();
+  _hideAllViews();
+  hideTopicCardMenu();
+  els.exportPage.classList.add("active");
+  state.view = "exportPage";
+
+  exportState.fromView = opts.from || "reader";
+  exportState.topicId = state.currentTopicId || DEFAULT_TOPIC_ID;
+  exportState.hasCurrent = !!state.pdf && !!state.pdfKey;
+  exportState.scope = exportState.fromView === "reader" && exportState.hasCurrent
+    ? "current" : "topic";
+  exportState.group = "tag";
+  exportState.annsByKey = {};
+  exportState.threadsByKey = {};
+
+  // 同步设置条 radio
+  for (const r of document.querySelectorAll('input[name="exportScope"]')) {
+    r.checked = r.value === exportState.scope;
+    // 没有当前在读的篇 → 禁用「当前篇」选项
+    if (r.value === "current") r.disabled = !exportState.hasCurrent;
+  }
+  for (const r of document.querySelectorAll('input[name="exportGroup"]')) {
+    r.checked = r.value === exportState.group;
+  }
+  await refreshExportPreview();
+}
+
+// 加载 topic 范围下「非当前篇」的 annotation / thread 工作集（可编辑、可写回）
+async function _loadExportTopicWorkset() {
+  const topic = state.topics[exportState.topicId];
+  if (!topic) return;
+  for (const pdfKey of (topic.pdfKeys || [])) {
+    if (pdfKey === state.pdfKey) continue;        // 当前篇用 state，跳过
+    if (exportState.annsByKey[pdfKey]) continue;  // 已载入
+    try {
+      const anns = (await loadAnnotations(pdfKey) || [])
+        .filter((a) => !a.topicId || a.topicId === exportState.topicId);
+      exportState.annsByKey[pdfKey] = anns;
+    } catch (e) {
+      console.warn("[export workset] loadAnnotations", pdfKey, e);
+      exportState.annsByKey[pdfKey] = [];
     }
+    try {
+      const recs = (await loadThreadsByPdfKey(pdfKey) || [])
+        .filter((t) => !t.topicId || t.topicId === exportState.topicId);
+      exportState.threadsByKey[pdfKey] = new Map(recs.map((t) => [t.id, t]));
+    } catch (e) {
+      console.warn("[export workset] loadThreadsByPdfKey", pdfKey, e);
+      exportState.threadsByKey[pdfKey] = new Map();
+    }
+  }
+}
+
+// 收集导出页要渲染的「篇」列表：{ pdfKey, title, anns, getThread, isCurrent }
+async function _collectExportDocs() {
+  const docs = [];
+  if (exportState.scope === "current") {
+    if (!exportState.hasCurrent) return docs;
+    docs.push({
+      pdfKey: state.pdfKey,
+      title: state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || "笔记",
+      anns: state.annotations || [],
+      getThread: (id) => state.threads[id],
+      isCurrent: true,
+    });
+    return docs;
+  }
+  // topic 范围
+  await _loadExportTopicWorkset();
+  const topic = state.topics[exportState.topicId];
+  for (const pdfKey of (topic?.pdfKeys || [])) {
+    if (pdfKey === state.pdfKey) {
+      docs.push({
+        pdfKey,
+        title: state.pdfTitle || deriveTitleFromPdfKey(pdfKey),
+        anns: (state.annotations || []).filter((a) => !a.topicId || a.topicId === exportState.topicId),
+        getThread: (id) => state.threads[id],
+        isCurrent: true,
+      });
+    } else {
+      const tmap = exportState.threadsByKey[pdfKey] || new Map();
+      docs.push({
+        pdfKey,
+        title: deriveTitleFromPdfKey(pdfKey),
+        anns: exportState.annsByKey[pdfKey] || [],
+        getThread: (id) => tmap.get(id),
+        isCurrent: false,
+      });
+    }
+  }
+  return docs;
+}
+
+// 持久化某篇的 annotation 改动（current → state；topic 非当前篇 → 工作集已是同一引用）
+function _persistExportAnns(doc) {
+  saveAnnotations(doc.pdfKey, doc.anns).catch((e) => console.warn("[export saveAnns]", e));
+}
+
+// 持久化某篇的 thread 改动
+function _persistExportThread(doc, thread) {
+  if (!thread || !thread.id) return;
+  if (doc.isCurrent) {
+    persistThread(thread);   // 当前篇走标准入口（注入 state 上下文）
+  } else {
+    const rec = {
+      ...thread,
+      pdfKey: doc.pdfKey,
+      topicId: thread.topicId || exportState.topicId,
+    };
+    saveThread(rec).catch((e) => console.warn("[export saveThread]", e));
+  }
+}
+
+// 渲染导出页预览树
+async function refreshExportPreview() {
+  const box = els.exportPreview;
+  box.replaceChildren();
+  const palette = state.topics[exportState.topicId]?.palette || [];
+  let docs;
+  try {
+    docs = await _collectExportDocs();
+  } catch (e) {
+    console.error("[refreshExportPreview]", e);
+    const err = document.createElement("p");
+    err.className = "export-empty";
+    err.textContent = "预览加载失败";
+    box.appendChild(err);
+    return;
+  }
+  if (docs.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "export-empty";
+    empty.textContent = "没有可导出的内容";
+    box.appendChild(empty);
+    return;
+  }
+  for (const doc of docs) {
+    const titleEl = document.createElement("div");
+    titleEl.className = "export-doc-title";
+    titleEl.textContent = `# 笔记：${doc.title}`;
+    box.appendChild(titleEl);
+    box.appendChild(_renderExportDocTree(doc, palette));
+  }
+}
+
+// 一条 message 行
+function _exportMsgRow(doc, thread, m, msgIndex) {
+  const row = document.createElement("div");
+  row.className = "export-msg" + (isMsgIncluded(m) ? "" : " export-row-off");
+  const label = document.createElement("label");
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = isMsgIncluded(m);
+  cb.addEventListener("change", () => {
+    m.includedInNote = cb.checked;
+    _persistExportThread(doc, thread);
+    refreshExportPreview();
+  });
+  const role = document.createElement("span");
+  role.className = "export-msg-role";
+  role.textContent = m.role === "user" ? "你：" : "Agent：";
+  const txt = document.createElement("span");
+  txt.className = "export-msg-text";
+  txt.textContent = (m.role === "user" ? _stripPageTag(m.content) : (m.content || "")).trim();
+  label.append(cb, role, txt);
+  row.appendChild(label);
+  return row;
+}
+
+// 一条 comment（annotation）块：原文行 + 它的消息
+function _exportCommentBlock(doc, ann, palette, showInlineTag) {
+  const wrap = document.createElement("div");
+  wrap.className = "export-comment";
+  const off = !isAnnIncluded(ann);
+
+  const head = document.createElement("div");
+  head.className = "export-comment-head" + (off ? " export-row-off" : "");
+  const label = document.createElement("label");
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = !off;
+  cb.addEventListener("change", () => {
+    ann.includedInNote = cb.checked;
+    _persistExportAnns(doc);
+    refreshExportPreview();
+  });
+  // 阅读顺序模式：comment 行内显示小色块标签
+  if (showInlineTag) {
+    const tag = palette.find((t) => t.id === ann.color);
+    const sw = document.createElement("span");
+    sw.className = "export-swatch";
+    sw.style.background = tag?.color || PALETTE_HEX[ann.color] || "#bbb";
+    label.append(cb, sw);
+  } else {
+    label.appendChild(cb);
+  }
+  const quote = document.createElement("span");
+  quote.className = "export-quote";
+  quote.textContent = `"${(ann.text || "").replace(/\s+/g, " ").trim()}"`;
+  const page = document.createElement("span");
+  page.className = "export-page-label";
+  page.textContent = annPageLabel(ann);
+  label.append(quote, page);
+  head.appendChild(label);
+  wrap.appendChild(head);
+
+  // comment 的消息
+  const thread = doc.getThread(ann.id);
+  const msgs = (thread && thread.messages) || [];
+  msgs.forEach((m, i) => {
+    if (off) return;  // 整条取消 → 不展开消息（取消即整组灰掉）
+    const content = (m.role === "user" ? _stripPageTag(m.content) : (m.content || "")).trim();
+    if (!content) return;
+    wrap.appendChild(_exportMsgRow(doc, thread, m, i));
+  });
+  return wrap;
+}
+
+// main「全文导读」块：comment 级勾选 = 它所有消息的批量开关（派生态）
+function _exportMainBlock(doc) {
+  const thread = doc.getThread("main");
+  const msgs = (thread && thread.messages) || [];
+  const real = msgs.filter((m) => {
+    const c = (m.role === "user" ? _stripPageTag(m.content) : (m.content || "")).trim();
+    return !!c;
+  });
+  if (real.length === 0) return null;
+
+  const allOn = real.every((m) => isMsgIncluded(m));
+  const group = document.createElement("div");
+  group.className = "export-group";
+  const headRow = document.createElement("div");
+  headRow.className = "export-group-head";
+  const label = document.createElement("label");
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = allOn;
+  cb.addEventListener("change", () => {
+    for (const m of real) m.includedInNote = cb.checked;
+    _persistExportThread(doc, thread);
+    refreshExportPreview();
+  });
+  const name = document.createElement("span");
+  name.textContent = "📄 全文导读";
+  label.append(cb, name);
+  headRow.appendChild(label);
+  group.appendChild(headRow);
+  for (const m of real) {
+    const i = msgs.indexOf(m);
+    group.appendChild(_exportMsgRow(doc, thread, m, i));
+  }
+  return group;
+}
+
+// 渲染一篇 PDF 的勾选树
+function _renderExportDocTree(doc, palette) {
+  const frag = document.createDocumentFragment();
+  let any = false;
+
+  // 1. 全文导读
+  const mainBlock = _exportMainBlock(doc);
+  if (mainBlock) { frag.appendChild(mainBlock); any = true; }
+
+  // 2. 高亮 comment
+  if (exportState.group === "reading") {
+    const sorted = [...doc.anns].sort(
+      (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+    );
+    if (sorted.length) {
+      const group = document.createElement("div");
+      group.className = "export-group";
+      for (const ann of sorted) {
+        group.appendChild(_exportCommentBlock(doc, ann, palette, true));
+      }
+      frag.appendChild(group);
+      any = true;
+    }
+  } else {
+    // 按标签归类
+    const groups = palette.map((tag) => ({ tag, anns: [] }));
+    const other = { tag: null, anns: [] };
+    for (const ann of doc.anns) {
+      const g = groups.find((x) => x.tag.id === ann.color);
+      (g || other).anns.push(ann);
+    }
+    for (const g of [...groups, other]) {
+      if (g.anns.length === 0) continue;
+      any = true;
+      const sorted = [...g.anns].sort(
+        (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+      );
+      const allOn = sorted.every((a) => isAnnIncluded(a));
+      const group = document.createElement("div");
+      group.className = "export-group";
+      const headRow = document.createElement("div");
+      headRow.className = "export-group-head";
+      const label = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = allOn;
+      cb.addEventListener("change", () => {
+        for (const a of sorted) a.includedInNote = cb.checked;
+        _persistExportAnns(doc);
+        refreshExportPreview();
+      });
+      if (g.tag) {
+        const sw = document.createElement("span");
+        sw.className = "export-swatch";
+        sw.style.background = g.tag.color || "#bbb";
+        const name = document.createElement("span");
+        name.textContent = g.tag.label;
+        label.append(cb, sw, name);
+      } else {
+        const name = document.createElement("span");
+        name.textContent = "其它";
+        label.append(cb, name);
+      }
+      headRow.appendChild(label);
+      // 〔全选/取消〕
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "export-group-toggle";
+      const groupAllOn = sorted.every((a) => isAnnIncluded(a));
+      toggle.textContent = groupAllOn ? "全部取消" : "全选";
+      toggle.addEventListener("click", () => {
+        const next = !groupAllOn;
+        for (const a of sorted) a.includedInNote = next;
+        _persistExportAnns(doc);
+        refreshExportPreview();
+      });
+      headRow.appendChild(toggle);
+      group.appendChild(headRow);
+      for (const ann of sorted) {
+        group.appendChild(_exportCommentBlock(doc, ann, palette, false));
+      }
+      frag.appendChild(group);
+    }
+  }
+
+  if (!any) {
+    const empty = document.createElement("p");
+    empty.className = "export-empty";
+    empty.textContent = "（这一篇暂无笔记）";
+    frag.appendChild(empty);
+  }
+  return frag;
+}
+
+// 导出页「下载 .md」
+async function downloadFromExportPage() {
+  try {
+    if (exportState.scope === "current") {
+      if (!state.pdf) return;
+      const md = generateCurrentPdfMarkdown(exportState.group);
+      const base = _safeFileName(state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || "笔记");
+      _downloadBlob(md, `${base}-${_formatStamp(new Date())}.md`);
+    } else {
+      const topic = state.topics[exportState.topicId];
+      if (!topic) return;
+      const md = await generateMarkdownExport(exportState.topicId, exportState.group);
+      _downloadBlob(md, `${_safeFileName(topic.name)}-${_formatStamp(new Date())}.md`);
+    }
+  } catch (e) {
+    console.error("[downloadFromExportPage]", e);
   }
 }
 
@@ -3107,9 +3598,9 @@ function ntmRenderPaletteEditor() {
     row.dataset.idx = String(idx);
 
     const em = document.createElement("span");
-    em.className = "ntm-emoji";
-    em.textContent = p.emoji;
-    em.title = "emoji 不可修改";
+    em.className = "ntm-swatch";
+    em.style.background = p.color || "#b8b8b8";
+    em.title = "标签颜色（创建后冻结）";
 
     const lb = document.createElement("input");
     lb.type = "text";
@@ -3181,12 +3672,9 @@ function ntmRenderConfirm() {
     const sw = document.createElement("span");
     sw.className = "ntm-cp-swatch";
     sw.style.background = p.color;
-    const em = document.createElement("span");
-    em.textContent = p.emoji;
     const lb = document.createElement("span");
     lb.textContent = p.label || "(未命名标签)";
     row.appendChild(sw);
-    row.appendChild(em);
     row.appendChild(lb);
     els.ntmConfirmPalette.appendChild(row);
   }
@@ -3259,41 +3747,13 @@ els.readerTopicHint.addEventListener("click", (e) => {
   startEditReaderTopicHint();
 });
 
-// v2-b：thread 切换器
-els.threadSummary.addEventListener("click", (e) => {
-  e.stopPropagation();
-  toggleThreadList();
+// 主题页大标题点击 → inline 重命名（任何主题，含默认）
+els.tpName.addEventListener("click", (e) => {
+  if (e.target.closest("input")) return;
+  if (state.currentTopicId) startEditTpName(state.currentTopicId);
 });
-els.threadList.addEventListener("click", (e) => {
-  const item = e.target.closest(".thread-list-item");
-  if (!item) return;
-  e.stopPropagation();
-  // v3-polish #7：点 ✎ → 进入 inline rename（不切 thread）
-  const renameBtn = e.target.closest(".tl-rename");
-  if (renameBtn) {
-    startEditThreadLabel(item.dataset.threadId, item);
-    return;
-  }
-  // 点 input 等 child → 别切 thread（startEditThreadLabel 自己 stopPropagation 已经管了 input）
-  if (e.target.closest(".tl-label-input")) return;
-  switchThread(item.dataset.threadId);
-});
-// v3-polish #7：thread-list-item 改成 div 后补一下键盘可达性（Enter / Space 切换）
-els.threadList.addEventListener("keydown", (e) => {
-  const item = e.target.closest(".thread-list-item");
-  if (!item) return;
-  if (e.target.closest(".tl-label-input")) return; // 编辑中由 input 自己接管
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    switchThread(item.dataset.threadId);
-  }
-});
-// 点空白处（包括 PDF 滚动 / chat / landing）→ 折叠 thread list
-document.addEventListener("mousedown", (e) => {
-  if (els.threadList.hidden) return;
-  if (e.target.closest("#threadList") || e.target.closest("#threadSummary")) return;
-  closeThreadList();
-});
+
+// v6：thread 切换器事件绑定已退休 —— 右栏 comment 列表的事件委托见下方「v6 comment 列表事件绑定」段
 
 // 搜索 UI 绑定（v3-polish-4：findToggle 按钮已删，搜索框始终可见 → 只剩 findClose / prev / next）
 // v4：× 按钮 = 主动清空（清 input value + 清高亮 + 焦点还 viewer），与 ESC（保留 value）区分语义
@@ -3398,15 +3858,7 @@ function updateZoomLevelUI() {
   }
   const scale = pdfViewer.currentScale || 1;
   const pct = Math.round(scale * 100);
-  // 当前用了预设字符串（page-width / page-fit）时显示中文
-  const sv = pdfViewer.currentScaleValue;
-  if (sv === "page-width") {
-    els.zoomLevel.textContent = `${pct}% · 宽`;
-  } else if (sv === "page-fit") {
-    els.zoomLevel.textContent = `${pct}% · 适配`;
-  } else {
-    els.zoomLevel.textContent = `${pct}%`;
-  }
+  els.zoomLevel.textContent = `${pct}%`;
 }
 function zoomOut() {
   if (!state.pdf) return;
@@ -3533,58 +3985,103 @@ function autoGrow(el) {
   el.style.height = target + "px";
   el.style.overflowY = el.scrollHeight > 240 ? "auto" : "hidden";
 }
-els.chatInput.addEventListener("input", () => autoGrow(els.chatInput));
+// ══════ v6 comment 列表（右栏）事件绑定 ══════
+// 全部事件委托挂在 #commentList 上 —— 卡片每次 renderCommentList 都整体重建
 
-els.chatForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  // 流式中点击 = 中止生成。abort 后 sendMessage 的 catch(AbortError) + finally 会善后
-  if (state.streaming) {
-    state.abortCtl?.abort();
+els.commentList.addEventListener("click", (e) => {
+  const card = e.target.closest(".cmt-card");
+  if (!card) return;
+  const commentId = card.dataset.commentId;
+
+  // 删除 comment（🗑）
+  if (e.target.closest(".cc-del")) {
+    e.stopPropagation();
+    const ann = state.annotations.find((a) => a.id === commentId);
+    if (!ann) return;
+    const n = state.threads[commentId] ? state.threads[commentId].messages.length : 0;
+    const ok = window.confirm(`删除这条 comment？\n高亮原文 + ${n} 条讨论将一并清除（不可撤销）。`);
+    if (ok) deleteAnnotation(commentId);
     return;
   }
-  const text = els.chatInput.value.trim();
-  if (!text) return;
-  els.chatInput.value = "";
-  autoGrow(els.chatInput);
-  sendMessage(text);
-});
-
-// v3-δ：引用回链 click 委托 —— 点 〔p.N〕 → 滚到该页 + flash
-// 挂在 chatMessages 上一次性绑定，所有 assistant 消息共享
-els.chatMessages.addEventListener("click", (e) => {
+  // 级别 2 折叠 toggle：展开折起的中间轮次
+  if (e.target.closest(".cc-fold-toggle")) {
+    state.cmtShowAll.add(commentId);
+    renderCommentList();
+    return;
+  }
+  // 引用回链 〔p.N〕→ 跳页 + flash（逻辑同旧 chatMessages 委托）
   const link = e.target.closest(".cite-link");
-  if (!link) return;
-  e.preventDefault();
-  const pageNum = parseInt(link.dataset.page, 10);
-  if (!pageNum || !state.pdf) return;
-  // 边缘 case：页码超出 PDF 总页数 → safe-fail（console.debug 留痕）
-  if (pageNum < 1 || pageNum > state.totalPages) {
-    console.debug("[cite-link] page out of range:", pageNum, "total=" + state.totalPages);
-    return;
-  }
-  // v3-polish-3 #3：cite-link 跳页同样保留 scrollLeft（同款问题：pdf.js 重置水平位置）
-  const prevScrollLeft = els.viewerContainer.scrollLeft;
-  try {
-    pdfViewer.scrollPageIntoView({ pageNumber: pageNum });
-  } catch (err) {
-    console.debug("[cite-link] scrollPageIntoView failed:", err);
-    return;
-  }
-  requestAnimationFrame(() => {
+  if (link) {
+    e.preventDefault();
+    const pageNum = parseInt(link.dataset.page, 10);
+    if (!pageNum || !state.pdf) return;
+    if (pageNum < 1 || pageNum > state.totalPages) {
+      console.debug("[cite-link] page out of range:", pageNum, "total=" + state.totalPages);
+      return;
+    }
+    const prevScrollLeft = els.viewerContainer.scrollLeft;
+    try {
+      pdfViewer.scrollPageIntoView({ pageNumber: pageNum });
+    } catch (err) {
+      console.debug("[cite-link] scrollPageIntoView failed:", err);
+      return;
+    }
     requestAnimationFrame(() => {
-      els.viewerContainer.scrollLeft = prevScrollLeft;
+      requestAnimationFrame(() => { els.viewerContainer.scrollLeft = prevScrollLeft; });
     });
-  });
-  flashPage(pageNum);
+    flashPage(pageNum);
+    return;
+  }
+  // 点卡片头 → 展开 / 收起（点卡片体内不触发）
+  if (e.target.closest(".cmt-card-head")) toggleComment(commentId);
 });
 
-els.chatInput.addEventListener("keydown", (e) => {
-  // Enter 发送 / Shift+Enter 换行 —— 标准 chat 行为 (ChatGPT/Claude/iMessage)
-  // 中文 IME 拼音组合中的 Enter 是确认候选词，不应触发发送 → 用 isComposing 守门
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+// 卡片头键盘可达性 + 卡片内输入框 Enter 提交
+els.commentList.addEventListener("keydown", (e) => {
+  const head = e.target.closest(".cmt-card-head");
+  if (head && (e.key === "Enter" || e.key === " ")) {
     e.preventDefault();
-    els.chatForm.dispatchEvent(new Event("submit"));
+    toggleComment(head.closest(".cmt-card").dataset.commentId);
+    return;
   }
+  // Enter 提交批注 / Shift+Enter 换行；中文 IME 组合中的 Enter 不提交
+  if (e.target.matches(".cc-input textarea")
+      && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    e.target.closest("form").requestSubmit();
+  }
+});
+
+// 「收入笔记」勾选切换
+els.commentList.addEventListener("change", (e) => {
+  const cb = e.target.closest('input[data-action="toggle-note"]');
+  if (!cb) return;
+  toggleMsgIncluded(cb.closest(".cmt-card").dataset.commentId, Number(cb.dataset.msgIndex));
+});
+
+// 卡片内输入框提交：含 @AI → 召唤 AI；否则纯批注。流式中点「停止」= abort。
+els.commentList.addEventListener("submit", (e) => {
+  const form = e.target.closest(".cc-input");
+  if (!form) return;
+  e.preventDefault();
+  const commentId = form.dataset.commentId;
+  if (state.streaming) {
+    if (commentId === state.streamingCommentId) state.abortCtl?.abort();
+    return;
+  }
+  const text = (form.querySelector("textarea")?.value || "").trim();
+  if (!text) return;
+  routeCommentInput(commentId, text);  // 内部会 renderCommentList 重建 DOM
+  // 纯批注（未进流式）→ 重建后焦点还给新输入框，方便连续记多条
+  if (!state.streaming) {
+    const ta = els.commentList.querySelector(`.cmt-card[data-comment-id="${commentId}"] .cc-input textarea`);
+    ta && ta.focus();
+  }
+});
+
+// 卡片内输入框 auto-grow
+els.commentList.addEventListener("input", (e) => {
+  if (e.target.matches(".cc-input textarea")) autoGrow(e.target);
 });
 
 // ────────────────────── v2-a 事件绑定 ──────────────────────
@@ -3593,8 +4090,8 @@ els.chatInput.addEventListener("keydown", (e) => {
 // 注意：mouseup 在选区刚定下来的下一帧才能可靠拿到 selection，用 setTimeout 0
 // 不监听 selectionchange —— 它在拖选过程中疯狂触发，会反复闪
 els.viewerContainer.addEventListener("mouseup", (e) => {
-  // 点在色板 / 气泡上不重新判断（让它们自己的 click handler 处理）
-  if (e.target.closest("#colorPalette") || e.target.closest("#hlBubble")) return;
+  // 点在色板上不重新判断（让它自己的 click handler 处理）
+  if (e.target.closest("#colorPalette")) return;
   // 点击高亮 rect —— 由 rect 自己的 click handler 处理，不抢
   if (e.target.closest && e.target.closest(".hl-rect")) return;
   // v3-polish-4 #3：选段卡顿排查 —— 标记 mouseup → palette 整条路径耗时
@@ -3610,8 +4107,6 @@ els.viewerContainer.addEventListener("mouseup", (e) => {
       console.timeEnd("[selection] mouseup→palette");
       return;
     }
-    // 有选区 → 同时确保气泡不挡道
-    hideHlBubble();
     console.time("[selection] describe+showPalette");
     showColorPalette();
     console.timeEnd("[selection] describe+showPalette");
@@ -3659,69 +4154,48 @@ els.colorPalette.addEventListener("mouseenter", () => {
   if (_paletteHideTimer) { clearTimeout(_paletteHideTimer); _paletteHideTimer = null; }
 });
 
-// 高亮 rect 点击：浮出气泡
+// v6：点 PDF 高亮 → 右栏展开对应 comment（b 方案；旧的 hl-bubble 已退休）
 // 用事件委托（rect 是动态创建的）
 els.viewerContainer.addEventListener("click", (e) => {
   const rect = e.target.closest(".hl-rect");
   if (!rect) return;
   e.stopPropagation();
   const annId = rect.dataset.annId;
-  const r = rect.getBoundingClientRect();
-  showHlBubble(annId, r);
+  // scrollPdf:false —— 高亮就在用户眼前，没必要再滚 PDF；只展开右栏 + flash
+  expandComment(annId, { scrollPdf: false });
+  flashAnnotation(annId);
 });
 
-// 气泡按钮：引用 / 删除
-els.hlBubble.addEventListener("mousedown", (e) => {
-  // 防止气泡按钮夺焦后干扰 selection
-  if (e.target.closest("button")) e.preventDefault();
-});
-els.hlBubble.addEventListener("click", (e) => {
-  const btn = e.target.closest("button");
-  if (!btn) return;
-  const annId = els.hlBubble.dataset.annId;
-  const ann = state.annotations.find((a) => a.id === annId);
-  // v3-polish-2 #1：无论 ann 是否存在、动作成功与否，**先**藏 bubble（鸭鸭：点完按钮气泡必须消失）
-  //   把 hide 放到 handler 顶部，避免任何下游路径抛错导致 bubble 留在屏幕上
-  hideHlBubble();
-  if (!ann) return;
-  if (btn.dataset.action === "quote") {
-    // 点"↪ 引用"= 把这条高亮挂到输入框引用区。
-    //   聊过的高亮 → 切回它的 thread，方便接着看历史 / 继续聊；
-    //   没聊过的高亮 → 不切 thread，引用带到当前对话里，发消息时才实质化（见 sendMessage）。
-    ensureAnnotationThread(ann);
-    const qt = state.threads[ann.id];
-    if (qt && qt.messages.length > 0) switchThread(ann.id);
-    quoteAnnotationToChat(ann);
-  } else if (btn.dataset.action === "delete") {
-    deleteAnnotation(annId);
-  }
-});
-// 鼠标离开气泡 → 150ms 缓冲后自动 hide；缓冲期内 mouseenter 取消
-els.hlBubble.addEventListener("mouseleave", () => {
-  if (_bubbleHideTimer) clearTimeout(_bubbleHideTimer);
-  _bubbleHideTimer = setTimeout(() => {
-    _bubbleHideTimer = null;
-    hideHlBubble();
-  }, HOVER_HIDE_DELAY);
-});
-els.hlBubble.addEventListener("mouseenter", () => {
-  if (_bubbleHideTimer) { clearTimeout(_bubbleHideTimer); _bubbleHideTimer = null; }
-});
-
-// 点 viewer 空白处（不是高亮、不是色板/气泡、也没新选区）→ 关闭气泡
-// 点 viewer 之外（如 chat 区域）→ 关闭色板和气泡
+// 点 viewer 之外（如右栏）→ 关闭色板；点浮出 comment 框之外 → 收起浮框（不填走掉 = 纯高亮）
 document.addEventListener("mousedown", (e) => {
-  if (e.target.closest("#colorPalette") || e.target.closest("#hlBubble")) return;
+  // 收起浮出 comment 框：点的不是浮框自身、不是色板、也不是 @ 联想下拉
+  // （.mention-dropdown 挂在 body 上、不在 #cmtCompose 里 —— 不排除的话点它选 @AI 会误收浮框）
+  if (!e.target.closest("#cmtCompose") && !e.target.closest("#colorPalette")
+      && !e.target.closest(".mention-dropdown")) hideCmtCompose();
+  if (e.target.closest("#colorPalette")) return;
   if (e.target.closest(".hl-rect")) return;
-  hideHlBubble();
   // 点击不在 viewer 内 → 直接关色板（viewer 内由 mouseup 决定）
   if (!els.viewerContainer.contains(e.target)) hideColorPalette();
 });
 
-// 滚动时：高亮跟随 .page 自动走（百分比定位），但浮动 toolbar 不跟随 → 直接收起
+// ══════ v6 划线浮出 comment 框 事件绑定 ══════
+els.cmtComposeSend.addEventListener("click", submitCmtCompose);
+els.cmtComposeInput.addEventListener("input", () => autoGrow(els.cmtComposeInput));
+els.cmtComposeInput.addEventListener("keydown", (e) => {
+  // Enter 发送 / Shift+Enter 换行（中文 IME 组合中的 Enter 不发送）
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    submitCmtCompose();
+  } else if (e.key === "Escape") {
+    // Esc = 不填走掉（纯高亮保留）
+    e.preventDefault();
+    hideCmtCompose();
+  }
+});
+
+// 滚动时：高亮跟随 .page 自动走（百分比定位），但浮动色板不跟随 → 直接收起
 els.viewerContainer.addEventListener("scroll", () => {
   if (!els.colorPalette.hidden) hideColorPalette();
-  if (!els.hlBubble.hidden) hideHlBubble();
 }, { passive: true });
 
 // ────────────────────── v3-β 事件绑定 ──────────────────────
@@ -3735,18 +4209,45 @@ els.topicBack.addEventListener("click", () => switchToTopicList());
 // 主题列表 "← 首页"
 els.topicListBack.addEventListener("click", () => switchToHome());
 
-// v3-δ：导出笔记
-els.tpExportBtn.addEventListener("click", async () => {
+// 导出整个主题（主题页底部按钮）—— 打开导出页（范围默认整个主题）
+els.tpExportBtn.addEventListener("click", () => {
   if (els.tpExportBtn.disabled) return;
-  // 防重复点（导出过程异步，避免重复触发下载）
-  els.tpExportBtn.disabled = true;
-  try {
-    await downloadTopicMarkdown(state.currentTopicId);
-  } finally {
-    // 重新按 topic.pdfKeys 状态回算（导出过程中 pdfKeys 不会变，但保险）
-    const topic = state.topics[state.currentTopicId];
-    updateExportBtnState(topic);
+  switchToExportPage({ from: "topicPage" });
+});
+
+// 导出当前阅读这一篇（reader 顶栏按钮）—— 打开导出页（范围默认当前篇）
+els.readerExportBtn.addEventListener("click", () => {
+  switchToExportPage({ from: "reader" });
+});
+
+// 导出页：← 返回来时的视图
+els.exportBack.addEventListener("click", () => {
+  if (exportState.fromView === "topicPage") {
+    switchToTopicPage(exportState.topicId);
+  } else {
+    switchToReader();
   }
+});
+
+// 导出页：下载 .md
+els.exportDownloadBtn.addEventListener("click", () => {
+  downloadFromExportPage();
+});
+
+// 导出页：范围 / 分组设置条 —— 改即刷新预览
+document.querySelectorAll('input[name="exportScope"]').forEach((r) => {
+  r.addEventListener("change", async () => {
+    if (!r.checked) return;
+    exportState.scope = r.value;
+    await refreshExportPreview();
+  });
+});
+document.querySelectorAll('input[name="exportGroup"]').forEach((r) => {
+  r.addEventListener("change", async () => {
+    if (!r.checked) return;
+    exportState.group = r.value;
+    await refreshExportPreview();
+  });
 });
 
 // 主题卡片 "..." 菜单
@@ -3827,6 +4328,195 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!els.newTopicModal.hidden) { closeNewTopicModal(); return; }
   if (!els.topicCardMenu.hidden) { hideTopicCardMenu(); return; }
+});
+
+// ══════ @ 自动联想（comment 输入框）══════
+// 用户在 comment 输入框打 `@` → 浮出候选下拉。首版只一个候选 @AI。
+// 适用：右栏卡片内 .cc-input textarea（每次 renderCommentList 重建 → 事件委托）
+//       + 划线浮框 #cmtComposeInput。
+// 锚定到 textarea 元素本身（position:fixed + getBoundingClientRect），不算光标像素坐标。
+const mention = (() => {
+  // 候选表 —— 结构上可扩展，首版只放 @AI（@多角色 是后期功能，不做）
+  const CANDIDATES = [
+    { insert: "AI", label: "@AI", hint: "召唤 AI 回复" },
+  ];
+
+  const dropdown = document.createElement("div");
+  dropdown.className = "mention-dropdown";
+  dropdown.setAttribute("role", "listbox");
+  dropdown.setAttribute("aria-label", "@ 联想");
+  dropdown.hidden = true;
+  document.body.appendChild(dropdown);
+
+  let activeInput = null;   // 当前关联的 textarea
+  let items = [];           // 当前过滤后的候选
+  let sel = 0;              // 高亮项索引
+  let atPos = -1;           // `@` 在 value 里的位置
+
+  // 判断 textarea 是否是受管输入框
+  function isManaged(el) {
+    return el && el.matches && (el.matches(".cc-input textarea") || el.id === "cmtComposeInput");
+  }
+
+  // 从光标往回找最近的 `@token`：返回 {at, query} 或 null
+  // 规则：`@` 前是行首或空白；`@` 到光标之间不含空白（含空白即视为已选完/无效）
+  function scanAt(el) {
+    const pos = el.selectionStart;
+    if (pos == null || pos !== el.selectionEnd) return null;
+    const v = el.value;
+    let i = pos - 1;
+    while (i >= 0) {
+      const ch = v[i];
+      if (ch === "@") {
+        const before = i === 0 ? "" : v[i - 1];
+        if (before === "" || /\s/.test(before)) {
+          return { at: i, query: v.slice(i + 1, pos) };
+        }
+        return null;
+      }
+      if (/\s/.test(ch)) return null;
+      i -= 1;
+    }
+    return null;
+  }
+
+  function place() {
+    if (!activeInput) return;
+    const r = activeInput.getBoundingClientRect();
+    // 锚到输入框左边缘；下拉宽度由内容决定（不撑满输入框，不算光标坐标）
+    dropdown.hidden = false; // 需先可见才能量尺寸
+    const w = dropdown.offsetWidth;
+    let left = r.left;
+    if (left + w > window.innerWidth - 8) left = Math.max(8, window.innerWidth - 8 - w);
+    dropdown.style.left = left + "px";
+    // 默认浮在输入框上方；上方空间不够则放下方
+    const h = dropdown.offsetHeight;
+    if (r.top - h - 4 >= 0) {
+      dropdown.style.top = (r.top - h - 4) + "px";
+    } else {
+      dropdown.style.top = (r.bottom + 4) + "px";
+    }
+  }
+
+  function render() {
+    dropdown.replaceChildren();
+    items.forEach((c, idx) => {
+      const row = document.createElement("div");
+      row.className = "mention-item" + (idx === sel ? " active" : "");
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", idx === sel ? "true" : "false");
+      row.dataset.idx = String(idx);
+      const name = document.createElement("span");
+      name.className = "mention-name";
+      name.textContent = c.label;
+      const hint = document.createElement("span");
+      hint.className = "mention-hint";
+      hint.textContent = c.hint;
+      row.append(name, hint);
+      dropdown.appendChild(row);
+    });
+    place();
+  }
+
+  function open(el) {
+    activeInput = el;
+    render();
+  }
+
+  function close() {
+    dropdown.hidden = true;
+    activeInput = null;
+    items = [];
+    atPos = -1;
+  }
+
+  function isOpen() { return !dropdown.hidden; }
+
+  // 输入时重新扫描：有合法 @token 且有匹配候选 → 开/更新；否则关
+  function refresh(el) {
+    const m = scanAt(el);
+    if (!m) { if (isOpen()) close(); return; }
+    const q = m.query.toLowerCase();
+    const matched = CANDIDATES.filter((c) => c.insert.toLowerCase().startsWith(q));
+    if (matched.length === 0) { if (isOpen()) close(); return; }
+    atPos = m.at;
+    items = matched;
+    sel = Math.min(sel, items.length - 1);
+    if (sel < 0) sel = 0;
+    open(el);
+  }
+
+  // 选中：把 value 里 `@query` 段替换成 `@AI `（含尾随空格）
+  function choose(idx) {
+    if (!activeInput || atPos < 0) { close(); return; }
+    const el = activeInput;
+    const cand = items[idx];
+    if (!cand) { close(); return; }
+    const v = el.value;
+    const end = el.selectionStart;
+    const insert = "@" + cand.insert + " ";
+    el.value = v.slice(0, atPos) + insert + v.slice(end);
+    const caret = atPos + insert.length;
+    el.setSelectionRange(caret, caret);
+    close();
+    autoGrow(el);
+    el.focus();
+  }
+
+  // keydown：方向键 / Enter / Tab / Esc。返回 true = 已消费（调用方应 preventDefault）
+  function handleKeydown(e) {
+    if (!isOpen() || e.target !== activeInput) return false;
+    if (e.key === "ArrowDown") {
+      sel = (sel + 1) % items.length; render(); return true;
+    }
+    if (e.key === "ArrowUp") {
+      sel = (sel - 1 + items.length) % items.length; render(); return true;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      choose(sel); return true;
+    }
+    if (e.key === "Escape") {
+      close(); return true;
+    }
+    return false;
+  }
+
+  // 下拉用 mousedown 选中（mousedown 早于 blur，避免输入框失焦先关掉下拉）
+  dropdown.addEventListener("mousedown", (e) => {
+    const row = e.target.closest(".mention-item");
+    if (!row) return;
+    e.preventDefault();      // 不让输入框失焦
+    choose(Number(row.dataset.idx));
+  });
+
+  return { isManaged, refresh, handleKeydown, close, isOpen };
+})();
+// 点别处收起
+document.addEventListener("mousedown", (e) => {
+  if (!mention.isOpen()) return;
+  if (e.target.closest(".mention-dropdown")) return;
+  if (e.target === document.activeElement && mention.isManaged(e.target)) return;
+  mention.close();
+}, true);
+// 委托：受管输入框的 input → 刷新联想
+document.addEventListener("input", (e) => {
+  if (mention.isManaged(e.target)) mention.refresh(e.target);
+}, true);
+// 委托：受管输入框的 keydown → 联想开着时方向键 / Enter / Tab / Esc 优先给联想
+// 用 capture 抢在 #commentList / #cmtComposeInput 的 keydown handler 之前
+document.addEventListener("keydown", (e) => {
+  if (!mention.isManaged(e.target)) return;
+  if (mention.handleKeydown(e)) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, true);
+// 焦点离开受管输入框（切到非下拉元素）→ 收起
+document.addEventListener("focusout", (e) => {
+  if (mention.isManaged(e.target)) {
+    // 延后一拍：若焦点落到下拉项的 mousedown 上则不关（mousedown 已 preventDefault）
+    setTimeout(() => { if (mention.isOpen() && document.activeElement !== e.target) mention.close(); }, 0);
+  }
 });
 
 // 启动后渲染主题列表：等 bootstrap 完成（加载完所有 topics）

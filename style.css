@@ -341,8 +341,94 @@ html, body {
 /* HTML [hidden] 默认 display:none 被 display:flex 覆盖 → hidden=true 但元素仍可见。
    显式压回去，否则 selectionchange / mousedown / scroll 等 hide 路径全形同虚设。
    (跟 .card-menu 一样的 web 陷阱，被坑过 4 次，这次彻底治) */
-.color-palette[hidden],
-.hl-bubble[hidden] { display: none !important; }
+.color-palette[hidden] { display: none !important; }
+
+/* v6 划线浮出 comment 框 */
+.cmt-compose {
+  position: absolute;
+  z-index: 22;
+  width: 320px;
+  max-width: calc(100% - 16px);
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 7px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.14);
+}
+.cmt-compose[hidden] { display: none !important; }
+.cmt-compose textarea {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  min-height: 34px;
+  max-height: 140px;
+  overflow-y: hidden;
+  box-sizing: border-box;
+  outline: none;
+  background: var(--bg);
+  transition: border-color 0.12s, background 0.12s;
+}
+.cmt-compose textarea:focus {
+  border-color: var(--ink-soft);
+  background: var(--surface);
+}
+.cmt-compose button {
+  flex-shrink: 0;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  transition: filter 0.12s;
+}
+.cmt-compose button:hover { filter: brightness(1.25); }
+
+/* ===== @ 自动联想下拉（comment 输入框）=====
+   锚定到 textarea（JS 用 position:fixed + getBoundingClientRect 定位）。
+   极简风：单色、克制，不喧宾夺主。 */
+.mention-dropdown {
+  position: fixed;
+  z-index: 60;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.13);
+  padding: 4px;
+  max-width: 280px;
+  overflow: hidden;
+}
+.mention-dropdown[hidden] { display: none !important; }
+.mention-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.mention-item.active { background: var(--bg); }
+.mention-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+.mention-hint {
+  font-size: 11px;
+  color: var(--ink-soft);
+}
 .color-palette {
   position: absolute;
   z-index: 20;
@@ -360,43 +446,23 @@ html, body {
 .color-palette .cp-btn {
   border: none;
   background: transparent;
-  font-size: 18px;
   width: 28px;
   height: 28px;
-  border-radius: 50%;
   cursor: pointer;
-  padding: 0;
-  line-height: 1;
+  padding: 5px;
+  line-height: 0;
   transition: transform 0.08s;
+}
+/* 纯色块图标：取标签 .color 的 hex（由 inline style 注入）*/
+.color-palette .cp-btn .cp-swatch {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 5px;
 }
 .color-palette .cp-btn:hover { transform: scale(1.18); }
 /* v3-polish：.cp-close 已删（取消选中 / mouseleave / 滚动 / 点空白都会自动 hide） */
-
-/* ===== 高亮气泡（点已有高亮浮出）===== */
-.hl-bubble {
-  position: absolute;
-  z-index: 20;
-  display: flex;
-  gap: 4px;
-  background: var(--ink);
-  color: #fff;
-  border-radius: 6px;
-  padding: 4px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-  user-select: none;
-  -webkit-user-select: none;
-}
-.hl-bubble button {
-  border: none;
-  background: transparent;
-  color: #fff;
-  font-size: 12px;
-  padding: 4px 8px;
-  cursor: pointer;
-  border-radius: 4px;
-  font-family: inherit;
-}
-.hl-bubble button:hover { background: rgba(255,255,255,0.18); }
+/* v6：.hl-bubble 已删 —— 点高亮改为「右栏展开对应 comment」（b 方案），删除入口移到 comment 卡片 */
 
 /* ===== 搜索栏 ===== */
 /* v5：position: relative —— 让 #findDropdown 绝对定位锚到 findBar 下方 */
@@ -501,119 +567,262 @@ html, body {
   flex-direction: column;
   min-width: 380px;
 }
-.thread-bar {
-  position: relative;          /* 给 .thread-list 绝对定位锚点 */
-  padding: 12px 20px;
+/* ===== v6 comment 列表（右栏）=====
+   右栏 = 一列 comment 卡片。手风琴两级折叠：
+     级别 1 —— 卡片折叠成一行（.cmt-card / .cmt-card.expanded）
+     级别 2 —— 展开后讨论过长则折叠中间轮次（.cc-fold-toggle），收入笔记的常驻 */
+.cmt-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 16px 10px 20px;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
   color: var(--ink-soft);
 }
-.thread-summary {
-  border: none;
-  background: transparent;
-  padding: 2px 6px;
-  margin: -2px -6px;           /* 视觉上保持原位（按钮的 padding 抵消） */
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  border-radius: 4px;
-  max-width: 100%;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.thread-summary:hover { background: var(--bg); color: var(--ink); }
-.thread-summary[aria-expanded="true"] { background: var(--bg); color: var(--ink); }
-.thread-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 16px;
-  right: 16px;
-  z-index: 30;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.10);
-  max-height: 50vh;
-  overflow-y: auto;
-  padding: 4px;
-}
-.thread-list-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--ink);
-  border: none;
-  background: transparent;
-  width: 100%;
-  text-align: left;
-  font-family: inherit;
-}
-.thread-list-item:hover { background: var(--bg); }
-.thread-list-item.active { background: var(--bg); font-weight: 500; }
-.thread-list-item .tl-label {
-  flex: 1;
+.cmt-summary {
+  font-variant-numeric: tabular-nums;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.thread-list-item .tl-meta {
+/* 导出本篇按钮 —— 醒目但不喧宾夺主 */
+.cmt-export-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.cmt-export-btn:hover { filter: brightness(1.2); }
+.cmt-export-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.comment-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cl-empty {
+  color: var(--ink-soft);
+  font-size: 13px;
+  text-align: center;
+  padding: 40px 16px;
+  line-height: 1.7;
+}
+
+/* 单条 comment 卡片
+   --cmt-color = 该 comment 标签色（buildCommentCard 注入）；main 无标签 → 回退中性灰。
+   颜色只从「标签」这一个入口进来：左色条 + chot 圆点都用它，其余保持单色克制。 */
+.cmt-card {
+  --cmt-color: var(--line);        /* 默认/main 回退色 */
+  position: relative;
+  flex-shrink: 0;                  /* 关键：不被 flex 列压扁 —— 内容超高时由 .comment-list 滚动 */
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+/* v6：左色条已去掉 —— 标签色由 chip 里的色点（.cc-tag-dot）承载，色条 + 色点冗余 */
+.cmt-card:not(.expanded):hover {
+  border-color: var(--ink-soft);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.05);
+}
+.cmt-card.expanded {
+  border-color: var(--ink-soft);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+}
+.cmt-card.cmt-main { background: var(--bg); }
+
+/* 卡片头（折叠态一行：标签 chip + 原文 + 💬N）*/
+.cmt-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.cmt-card-head:hover { background: var(--bg); }
+.cmt-card.expanded .cmt-card-head {
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+/* 标签 chip：标签色圆点 + label 文字 + 页码 */
+.cc-tag {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.cc-tag-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2.5px;
+  background: var(--cmt-color);
+  flex-shrink: 0;
+}
+.cc-tag-main .cc-tag-dot { background: var(--ink-soft); }
+.cc-tag-label { font-weight: 500; }
+.cc-tag-page {
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.cc-quote {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
+}
+.cmt-card.expanded .cc-quote { color: var(--ink); font-weight: 500; }
+.cc-count {
+  flex-shrink: 0;
   font-size: 11px;
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
 }
-/* v3-polish #7：行内重命名按钮（默认半透明 → hover/active 时高亮）*/
-.thread-list-item .tl-rename {
+.cc-del {
+  flex-shrink: 0;
   border: none;
   background: transparent;
   color: var(--ink-soft);
   cursor: pointer;
   font-size: 12px;
-  padding: 2px 6px;
+  padding: 2px 4px;
   border-radius: 4px;
-  opacity: 0.4;
-  flex-shrink: 0;
+  opacity: 0;
 }
-.thread-list-item:hover .tl-rename,
-.thread-list-item.active .tl-rename { opacity: 1; }
-.thread-list-item .tl-rename:hover { background: var(--surface); color: var(--ink); }
-/* v3-polish #7：thread label inline input */
-.thread-list-item .tl-label-input {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--line);
-  outline: none;
-  background: var(--surface);
-  font: inherit;
-  color: var(--ink);
-  padding: 2px 6px;
-  border-radius: 4px;
+.cmt-card-head:hover .cc-del,
+.cmt-card.expanded .cc-del { opacity: 1; }
+.cc-del:hover { background: var(--err); color: #fff; }
+
+/* 卡片体（展开态）—— 用 class 控制 display，避开 [hidden] 被覆盖的老坑 */
+.cmt-card-body { padding: 12px; }
+.cmt-card:not(.expanded) .cmt-card-body { display: none; }
+/* 展开态原文引用 —— 非斜体（斜体让混排/乱码更难读），用标签色作左边框锚 */
+.cc-fullquote {
+  font-size: 13px;
+  font-style: normal;
+  color: var(--ink-soft);
+  border-left: 3px solid var(--cmt-color);
+  padding-left: 10px;
+  margin-bottom: 14px;
+  line-height: 1.6;
 }
-.thread-list-item .tl-label-input:focus { border-color: var(--ink-soft); }
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px;
+.cmt-card.cmt-main .cc-fullquote { border-left-color: var(--ink-soft); }
+.cc-messages {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 14px;
 }
+/* 级别 2 折叠：中间轮次折叠 toggle */
+.cc-fold-toggle {
+  align-self: flex-start;
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.cc-fold-toggle:hover { border-color: var(--ink-soft); color: var(--ink); }
+
+/* 每条消息上的「收入笔记」逐条开关 —— 默认几乎隐形，靠 .content 变暗表达「已排除」。
+   未排除（默认勾选）：极低对比、缩小，不抢视线；hover 该消息时才显出文字。
+   已排除：复选框露出来（让用户知道能勾回来）。 */
+.msg-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  margin-top: 5px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.msg-note input {
+  margin: 0;
+  cursor: pointer;
+  width: 11px;
+  height: 11px;
+  accent-color: var(--ink-soft);
+}
+/* hover 这条消息 → 勾选控件淡淡显出 */
+.msg:hover .msg-note { opacity: 0.55; }
+.msg-note:hover { opacity: 0.9 !important; }
+/* 已排除：复选框 + 文字常驻可见（提示能勾回来），正文变暗 */
+.msg.note-excluded .msg-note { opacity: 0.7; }
+.msg.note-excluded .content { opacity: 0.4; }
+
+/* 卡片内输入（Block 2：纯批注；Block 3 接 @AI）*/
+.cc-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.cc-input textarea {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: none;
+  min-height: 36px;
+  max-height: 160px;
+  overflow-y: hidden;
+  box-sizing: border-box;
+  outline: none;
+  background: var(--surface);
+}
+.cc-input textarea:focus { border-color: var(--ink); }
+.cc-input button {
+  flex-shrink: 0;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  padding: 0 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+}
+.cc-input button:disabled { opacity: 0.4; cursor: not-allowed; }
+.cc-input button.stopping { background: var(--err); }
+.cc-input textarea:disabled { background: var(--bg); cursor: not-allowed; }
 .msg { max-width: 100%; }
+/* 角色标签 —— 柔和小字，不用大写（uppercase 把「Agent」变成生硬的「AGENT」）*/
 .msg .role {
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.01em;
   color: var(--ink-soft);
-  margin-bottom: 6px;
+  margin-bottom: 5px;
 }
-.msg .content { word-wrap: break-word; }
+.msg .content {
+  word-wrap: break-word;
+  font-size: 13px;
+  line-height: 1.6;
+}
 .msg.user .content { color: var(--ink); white-space: pre-wrap; }
 .msg.assistant .content { color: var(--ink); }
 /* 让 marked 渲染出来的元素留点呼吸 */
@@ -734,88 +943,7 @@ html, body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.chat-form {
-  display: flex;
-  gap: 8px;
-  padding: 16px;
-  border-top: 1px solid var(--line);
-}
-.chat-form textarea {
-  flex: 1;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-family: inherit;
-  font-size: 14px;
-  /* v4：auto-grow（JS 控制 scrollHeight）—— 去手柄、内部滚动、box-sizing 避免 padding 重复累加 */
-  resize: none;
-  min-height: 44px;
-  max-height: 240px;
-  /* v3-polish-5：默认 hidden，由 autoGrow 在 scrollHeight > 240 时切换为 auto */
-  /* 之前 overflow-y: auto 会在所有高度都显示 scrollbar，5 行以内造成视觉噪声 */
-  overflow-y: hidden;
-  box-sizing: border-box;
-  outline: none;
-  background: var(--surface);
-}
-
-/* v3-polish-2 #3：引用 chip 独立栏（chatInput 上方）*/
-.quote-bar {
-  padding: 8px 16px 0;
-  display: flex;
-}
-.quote-bar[hidden] { display: none; }
-.quote-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  padding: 6px 8px 6px 10px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 12px;
-  color: var(--ink-soft);
-  overflow: hidden;
-}
-.quote-chip .qc-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-style: italic;
-}
-.quote-chip .qc-close {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  border: none;
-  background: transparent;
-  color: var(--ink-soft);
-  border-radius: 50%;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.quote-chip .qc-close:hover { background: var(--surface); color: var(--ink); }
-.chat-form textarea:focus { border-color: var(--ink); }
-.chat-form textarea:disabled { background: var(--bg); cursor: not-allowed; }
-.chat-form button {
-  border: none;
-  background: var(--accent);
-  color: white;
-  width: 40px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-.chat-form button:disabled { opacity: 0.4; cursor: not-allowed; }
-.chat-form button.stopping { background: var(--err); opacity: 1; cursor: pointer; }
-.chat-form button.stopping:hover { filter: brightness(1.08); }
+/* v6：.chat-form / .quote-bar / .quote-chip 已删 —— 输入移到每张 comment 卡片内（.cc-input） */
 
 /* ===== v3-β 主题列表（landing）===== */
 #landing { justify-content: flex-start; align-items: stretch; padding: 0; }
@@ -1006,6 +1134,25 @@ html, body {
   letter-spacing: -0.01em;
   word-break: break-word;
   margin-bottom: 4px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.tp-name:hover {
+  background: var(--surface);
+}
+.tp-name-input {
+  font: inherit;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: inherit;
+  border: none;
+  outline: none;
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 0;
+  margin: 0;
+  width: 100%;
 }
 .tp-palette-row {
   display: flex;
@@ -1018,13 +1165,19 @@ html, body {
 .tp-palette-row .tp-tag {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--bg);
   font-size: 12px;
   color: var(--ink);
   white-space: nowrap;
+}
+.tp-palette-row .tp-tag .tp-tag-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2.5px;
+  flex-shrink: 0;
 }
 
 .tp-load-form { margin-top: 8px; }
@@ -1206,6 +1359,7 @@ html, body {
 }
 #ntmNameInput:focus { border-color: var(--ink); }
 .ntm-hint { font-size: 12px; color: var(--ink-soft); margin-top: 8px; line-height: 1.5; }
+.ntm-hint-warn { color: var(--err); }
 .ntm-warn { font-size: 13px; color: var(--err); margin-top: 12px; }
 .ntm-step-indicator { font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .ntm-actions { display: flex; gap: 8px; }
@@ -1224,10 +1378,11 @@ html, body {
   border-radius: 8px;
   padding: 8px 10px;
 }
-.ntm-row .ntm-emoji {
-  font-size: 18px;
-  width: 28px;
-  text-align: center;
+/* palette 编辑器行首：纯色块（取标签 color hex，由 inline style 注入）*/
+.ntm-row .ntm-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
   flex-shrink: 0;
 }
 .ntm-row input[type="text"] {
@@ -1286,3 +1441,177 @@ html, body {
   flex-shrink: 0;
 }
 
+
+/* ── 导出页 ───────────────────────────────────────────── */
+#exportPage.view.active { flex-direction: column; }
+.export-page-inner {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+}
+.export-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.export-header .ghost {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--ink-soft);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.export-header .ghost:hover { background: var(--bg); color: var(--ink); }
+.export-title { font-size: 16px; font-weight: 600; margin: 0; }
+.export-settings {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.export-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.export-setting-label {
+  font-size: 13px;
+  color: var(--ink-soft);
+  width: 40px;
+  flex-shrink: 0;
+}
+.export-radio {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.export-radio input:disabled + span { color: var(--ink-soft); opacity: 0.5; }
+.export-radio:has(input:disabled) { cursor: not-allowed; }
+.export-preview-hint {
+  padding: 12px 20px 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin: 0;
+  flex-shrink: 0;
+}
+.export-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 20px 24px;
+}
+.export-doc-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 8px 0 14px;
+}
+.export-group {
+  margin-bottom: 14px;
+}
+.export-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.export-group-head label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.export-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.export-group-toggle {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--ink-soft);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.export-group-toggle:hover { color: var(--ink); background: var(--bg); }
+.export-comment {
+  margin: 4px 0 4px 20px;
+}
+.export-comment-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+}
+.export-comment-head label {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+.export-quote {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.export-page-label {
+  color: var(--ink-soft);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.export-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 3px 0 3px 22px;
+  font-size: 12.5px;
+}
+.export-msg label {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  cursor: pointer;
+}
+.export-msg-role { color: var(--ink-soft); flex-shrink: 0; }
+.export-msg-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.export-row-off { opacity: 0.4; }
+.export-empty {
+  color: var(--ink-soft);
+  font-size: 13px;
+  padding: 20px 0;
+  text-align: center;
+}
+.export-comment-inline-tag {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
