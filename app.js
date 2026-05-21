@@ -730,22 +730,27 @@ const PALETTE_HEX = {
 //   - 给 LLM 的 system 注入只 emit emoji + label，不 emit id（system_prompt.md 已更新格式）
 //   - 用户后续在主题编辑器里可改 label/color/增删行（不在 v3-α 范围内，UI 不动）
 const DEFAULT_PALETTE = [
-  { id: "red",    emoji: "🔴", label: "看不懂",   color: "#ff5e5e" },
-  { id: "green",  emoji: "🟢", label: "已掌握",   color: "#54d062" },
-  { id: "blue",   emoji: "🔵", label: "课题相关", color: "#4a9eff" },
-  { id: "purple", emoji: "🟣", label: "质疑",     color: "#b06dff" },
-  { id: "yellow", emoji: "🟡", label: "重点",     color: "#f5d042" },
-  { id: "gray",   emoji: "⚪", label: "待查",     color: "#b8b8b8" },
+  { id: "red",    emoji: "🔴", label: "没懂",   color: "#ff5e5e", aiHint: "把这段彻底讲透，用最简单的话拆解，确认他懂了再停" },
+  { id: "yellow", emoji: "🟡", label: "重点",   color: "#f5d042", aiHint: "帮他把这段压缩成能直接进笔记的精炼表述" },
+  { id: "blue",   emoji: "🔵", label: "可借鉴", color: "#4a9eff", aiHint: "帮他想清楚这个方法/思路怎么迁移到他自己的研究" },
+  { id: "purple", emoji: "🟣", label: "存疑",   color: "#b06dff", aiHint: "顺着他的疑问深挖，给支持或反驳的依据，不和稀泥" },
+  { id: "green",  emoji: "🟢", label: "要引用", color: "#54d062" },
+  { id: "gray",   emoji: "⚪", label: "待查",   color: "#b8b8b8", aiHint: "帮他判断这个说法可不可信、该怎么核实" },
 ];
 const DEFAULT_TOPIC_ID = "default";
 
 // 构建 palette 注入字符串（追加到 system message 末尾，给 LLM 看 tag 规则）
-// 设计：emit emoji + label，按 palette 数组原顺序 —— 这是 caching 前缀稳定的关键（同主题永远相同字节序列）
-// 改 palette = cache 失效（合理，按 V3_DESIGN C.3）
+// 设计：每行一个 tag —— 有 aiHint 就 "标签：提示"，没有就只输出标签名。
+//       按 palette 数组原顺序 —— 这是 caching 前缀稳定的关键（同 palette 永远相同字节序列，
+//       不掺时间戳/随机）。改 palette = cache 失效（合理，按 V3_DESIGN C.3）。
+// aiHint 是可选字段：自定义主题的 tag 没有它也正常工作。
 function buildPaletteRules(palette) {
   if (!palette || palette.length === 0) return "";
-  const lines = palette.map((p) => `- ${p.emoji} ${p.label}`);
-  return `## 主题 tag 规则\n${lines.join("\n")}`;
+  const lines = palette.map((p) => {
+    const hint = p.aiHint && p.aiHint.trim();
+    return hint ? `- ${p.label}：${hint}` : `- ${p.label}`;
+  });
+  return `## 标签规则\n用户用颜色标签标记论文里的段落，按标签调整你的回应：\n${lines.join("\n")}`;
 }
 
 // ── IndexedDB 轻封装（无依赖） ──
@@ -1217,10 +1222,24 @@ async function runMigrations() {
   }
 }
 
-// 启动期总入口：先 ensure default topic，再跑 annotation 迁移，最后加载所有 topics 到 state
+// 启动期总入口：先探测是否首次使用，再决定 ensure default / 弹首次 modal
 // 在模块顶层 fire-and-forget 跑；后续 loadPdf 用到 state.topics 时若还没好会落到 ensureDefaultTopic 兜底
 // v3-β：额外把 IDB 里所有 topics 拉到内存里，topic grid 渲染时用
+//
+// palette 改版：首次使用（IDB 里从没建过任何 topic）→ 不静默建默认主题，
+//   而是标记 _isFirstRun，由 _bootstrapPromise.then 里弹 3 步「新建主题」modal 让用户走一遍。
+//   非首次 → 照旧 ensureDefaultTopic 兜底（保证 default 一直在）。
+let _isFirstRun = false;
 const _bootstrapPromise = (async () => {
+  // 先看 IDB 里有没有 topic（不能先 ensureDefaultTopic，否则它会静默建出 default）
+  const existing = await loadAllTopics();
+  if (existing.length === 0) {
+    // 首次使用：不建默认主题，留给 modal 流程。但 migration 仍要跑（幂等、无害）。
+    _isFirstRun = true;
+    await runMigrations();
+    return;
+  }
+  // 非首次：照旧确保 default 存在 + 迁移 + 全量加载
   await ensureDefaultTopic();
   // v3-γ：用统一 migration 入口（ann 补 topicId + default.pdfKeys 回填，靠 metadata.migrationVersion 幂等）
   await runMigrations();
@@ -2873,11 +2892,12 @@ function _uuid() {
 }
 
 // 创建主题：写 IDB + 内存 + 切到新主题页
-async function createTopic({ name, palette }) {
-  const id = _uuid();
+// id 可选：首次使用流程传 DEFAULT_TOPIC_ID，让"第一个主题"就是默认主题；否则生成 uuid
+async function createTopic({ name, palette, id }) {
+  const tid = id || _uuid();
   const now = new Date().toISOString();
   const topic = {
-    id,
+    id: tid,
     name: (name || "").trim() || "未命名主题",
     // 深拷贝 palette（防 modal 编辑器后续 mutate）
     palette: (palette || []).map((p) => ({ ...p })),
@@ -2887,7 +2907,7 @@ async function createTopic({ name, palette }) {
     // 老主题（v3-α/β 创建无此字段）保持 undefined，不主动 migrate（避免 IDB 写风暴）
     paletteFrozenAt: now,
   };
-  state.topics[id] = topic;
+  state.topics[tid] = topic;
   await saveTopic(topic);
   return topic;
 }
@@ -3592,6 +3612,11 @@ function openNewTopicModal() {
 }
 function closeNewTopicModal() {
   els.newTopicModal.hidden = true;
+  // 首次使用时用户没建主题就关掉 modal → 兜底建默认主题，别让 app 处于"无 topic"状态
+  if (_isFirstRun && !state.topics[DEFAULT_TOPIC_ID]) {
+    _isFirstRun = false;
+    ensureDefaultTopic().catch((e) => console.warn("[firstRun fallback]", e));
+  }
 }
 
 function ntmRenderStep() {
@@ -3724,14 +3749,19 @@ async function ntmDoCreate() {
   if (!palette.length || palette.some((p) => !p.label || !p.label.trim())) {
     ntmDraft.step = 2; ntmRenderStep(); return;
   }
+  // 首次使用：这一个主题就是「默认主题」(id=default)，让首页粘链接等照常落到 default
+  const firstRun = _isFirstRun && !state.topics[DEFAULT_TOPIC_ID];
   els.ntmConfirm.disabled = true;
   try {
-    const topic = await createTopic({ name, palette });
+    const topic = await createTopic(
+      firstRun ? { name, palette, id: DEFAULT_TOPIC_ID } : { name, palette }
+    );
     // 埋点：纯行为信号，不发主题名 / palette 内容
     track("topic_created");
+    if (firstRun) _isFirstRun = false;   // 必须在 closeNewTopicModal 前清，否则触发兜底
     closeNewTopicModal();
-    // 切到新主题
-    switchToTopicPage(topic.id);
+    if (firstRun) switchToHome();         // 首次：回首页，让用户粘链接开始读
+    else switchToTopicPage(topic.id);     // 平时：进新主题页
   } catch (e) {
     console.error("[createTopic]", e);
     setLandingStatus(`创建主题失败：${e.message || e}`, true);
@@ -4560,6 +4590,12 @@ document.addEventListener("focusout", (e) => {
 // 启动后渲染主题列表：等 bootstrap 完成（加载完所有 topics）
 // bootstrap 失败时 state.topics 至少有内存兜底的 default
 _bootstrapPromise.then(() => {
+  // 首次使用：弹 3 步「新建主题」modal，让用户确认色卡含义、建第一个（=默认）主题
+  if (_isFirstRun) {
+    switchToHome();
+    openNewTopicModal();
+    return;
+  }
   // 二次兜底：bootstrap 跑完，state.topics 仍空时塞个默认（极端 IDB 故障）
   if (Object.keys(state.topics).length === 0) {
     state.topics[DEFAULT_TOPIC_ID] = {
