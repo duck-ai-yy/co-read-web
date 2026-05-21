@@ -68,15 +68,12 @@ html, body {
 }
 .hr-topic { flex: 0 0 auto; font-size: 12px; color: var(--ink-soft); }
 .home-manage { margin-top: 32px; font-size: 13px; }
-/* 试用声明：第三方 LLM 告知 + 本地保存亮点 —— 低调 fine-print，不喧宾夺主 */
-.home-notice {
-  max-width: 460px;
-  margin: 36px auto 0;
-  padding-top: 18px;
-  border-top: 1px solid var(--line);
-  font-size: 12px;
-  line-height: 1.75;
+/* 页脚版权 —— 极低调一行 */
+.home-copyright {
+  margin-top: 44px;
+  font-size: 11px;
   color: var(--ink-soft);
+  opacity: 0.7;
 }
 .tl-back { margin-bottom: 20px; }
 .tagline { color: var(--ink-soft); font-size: 1.05rem; margin-bottom: 40px; }

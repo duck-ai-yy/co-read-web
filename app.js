@@ -21,6 +21,21 @@ const PDFJS_DOC_OPTS = {
   standardFontDataUrl: PDFJS_ASSET_BASE + "standard_fonts/",
 };
 
+// ────────────────────── 轻量埋点（试用期）──────────────────────
+// 只记行为信号 + 轻量元数据，绝不记内容（论文正文 / 批注 / AI 对话 / 划选原文 / PII 永不上报）。
+// fire-and-forget：发到 /api/event，绝不阻塞 UI、绝不抛错。
+const _SID = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+function track(event, meta) {
+  try {
+    fetch("/api/event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, ts: Date.now(), sid: _SID, ...(meta || {}) }),
+    }).catch(() => {});
+  } catch (_) { /* 绝不抛错 */ }
+}
+track("session_start");
+
 // ────────────────────── state ──────────────────────
 // v2-b：对话 thread 化
 //   threads: { id → { id, annotationId, anchorPage, anchorColor, label, quotedText, messages, createdAt } }
@@ -351,6 +366,12 @@ async function loadPdf({ url, file, topicId }) {
     state.totalPages = state.pdf.numPages;
     state.pdfTitle = title;
     state.pdfKey = pdfKey;
+
+    // 埋点：只发页数 + 来源类型，不发 URL / 文件名 / 任何内容
+    track("pdf_loaded", {
+      pages: state.totalPages,
+      source: file ? "file" : (/arxiv\.org/i.test(url || "") ? "arxiv" : "url"),
+    });
 
     // v3-β: 把当前 PDF 关联到 targetTopic（pdfKeys 去重 push + 更新 lastOpened 时间）
     // 同一 pdfKey 在多个主题间可共享引用（鸭鸭已拍板：annotations 按 topicId 区分）
@@ -1579,6 +1600,8 @@ async function createAnnotation(color) {
     createdAt: new Date().toISOString(),
   };
   state.annotations.push(ann);
+  // 埋点：只发标签色 id，不发划选原文
+  track("highlight_created", { color });
   // 清掉浏览器选区（视觉上让用户感受到"动作完成"）
   window.getSelection()?.removeAllRanges();
   // v3-polish #6：增量画新 ann 的 rect（不再 replaceChildren 整层重建）
@@ -1641,6 +1664,8 @@ async function deleteAnnotation(id) {
   renderCommentList();
   // 7. 异步存
   saveAnnotations(state.pdfKey, state.annotations).catch((e) => console.warn("[save]", e));
+  // 埋点：纯行为信号
+  track("comment_deleted");
 }
 
 // 用 CSS class 闪一下对应 ann 的 rect（视觉强化"定位到这条高亮"）
@@ -1692,8 +1717,8 @@ function updateCommentSummary() {
   if (!els.cmtSummary) return;
   const n = state.annotations.length; // main 之外的 comment 数（含纯标记高亮）
   els.cmtSummary.textContent = n === 0
-    ? "⊳ 还没有 comment —— 划线选色即可建一条"
-    : `⊳ ${n} 条 comment`;
+    ? "还没有 comment —— 划线选色即可建一条"
+    : `${n} 条 comment`;
 }
 
 // 主渲染入口：清空 #commentList 重建所有卡片
@@ -1968,7 +1993,7 @@ function submitCmtCompose() {
   const text = (els.cmtComposeInput.value || "").trim();
   hideCmtCompose();
   if (!id || !text) return;
-  routeCommentInput(id, text);
+  routeCommentInput(id, text, "compose");
 }
 
 // Block 2：往 comment 里加一条纯批注（用户消息，不调 LLM）。@AI 召唤由 Block 3 接入。
@@ -1983,6 +2008,8 @@ function addBareNote(commentId, text) {
   if (!thread) return;
   thread.messages.push({ role: "user", content: t, includedInNote: true });
   persistThread(thread);
+  // 埋点：纯批注，不发批注文字
+  track("note_added");
   renderCommentList();
 }
 
@@ -2010,14 +2037,15 @@ function defaultQuestion(commentId) {
 }
 
 // comment 输入路由：含 @AI → 召唤 AI；否则 → 纯批注。compose 框与卡片输入共用。
-function routeCommentInput(commentId, text) {
+// from：埋点来源（compose / card），透传给 sendToComment。
+function routeCommentInput(commentId, text, from) {
   const t = (text || "").trim();
   if (!t) return;
   state.streamError = null;
   state.expandedCommentId = commentId; // 确保结果在右栏可见
   if (/@ai/i.test(t)) {
     const q = t.replace(/@ai/ig, "").trim();
-    sendToComment(commentId, q || defaultQuestion(commentId));
+    sendToComment(commentId, q || defaultQuestion(commentId), from || "card");
   } else {
     addBareNote(commentId, t);
   }
@@ -2025,10 +2053,12 @@ function routeCommentInput(commentId, text) {
 
 // 把一条问题发给某条 comment 的 AI。用户消息 + AI 回复都进 thread.messages，
 // 流式渲染进右栏展开卡片里的 .msg.assistant.streaming 占位气泡。
-async function sendToComment(commentId, question) {
+async function sendToComment(commentId, question, from) {
   if (state.streaming) return;
   const q = (question || "").trim();
   if (!q) return;
+  // 埋点：只发来源类型，不发问题文字
+  track("ai_invoked", { from: from || "card" });
   let thread = state.threads[commentId];
   if (!thread && commentId !== "main") {
     const ann = state.annotations.find((a) => a.id === commentId);
@@ -2074,6 +2104,7 @@ async function sendToComment(commentId, question) {
   const messagesForLLM = [...sys, ...thread.messages];
 
   let fullText = "";
+  let _replyOk = false;
   try {
     const r = await fetch("/api/chat", {
       method: "POST",
@@ -2121,6 +2152,7 @@ async function sendToComment(commentId, question) {
     if (!fullText.trim()) throw new Error("上游返回空内容（可能被安全过滤或额度耗尽）。");
     thread.messages.push({ role: "assistant", content: fullText, includedInNote: true });
     persistThread(thread);
+    _replyOk = true;
   } catch (e) {
     if (e.name === "AbortError") {
       // 中止：有半成品就留下（标注已中止），没有就只留用户消息
@@ -2144,6 +2176,8 @@ async function sendToComment(commentId, question) {
     state.streaming = false;
     state.streamingCommentId = null;
     state.abortCtl = null;
+    // 埋点：只发成功/失败布尔，不发回复内容
+    track("ai_reply", { ok: _replyOk });
     renderCommentList();
   }
 }
@@ -2186,7 +2220,7 @@ const PRIME_KEYWORD = "核心总结";
 
 async function primeSummary() {
   // 自动总结进「全文 comment」(main)。文案含 PRIME_KEYWORD（见 defaultQuestion），供 maybePrimeSummary 检测
-  await sendToComment("main", defaultQuestion("main"));
+  await sendToComment("main", defaultQuestion("main"), "prime");
 }
 
 // v3-fixup #1: prime 重复触发修
@@ -2413,7 +2447,7 @@ function resetReaderState() {
   // v5：收起搜索结果下拉（避免跨 PDF 残留旧结果）
   hideFindDropdown();
   els.pageInfo.textContent = "- / -";
-  if (els.cmtSummary) els.cmtSummary.textContent = "⊳ 准备中…";
+  if (els.cmtSummary) els.cmtSummary.textContent = "准备中…";
   els.pdfTitle.textContent = "";
   els.readerTopicHint.textContent = "";
 }
@@ -3173,6 +3207,8 @@ async function switchToExportPage(opts = {}) {
   exportState.hasCurrent = !!state.pdf && !!state.pdfKey;
   exportState.scope = exportState.fromView === "reader" && exportState.hasCurrent
     ? "current" : "topic";
+  // 埋点：只发范围类型，不发笔记内容
+  track("export_opened", { range: exportState.scope });
   exportState.group = "tag";
   exportState.annsByKey = {};
   exportState.threadsByKey = {};
@@ -3691,6 +3727,8 @@ async function ntmDoCreate() {
   els.ntmConfirm.disabled = true;
   try {
     const topic = await createTopic({ name, palette });
+    // 埋点：纯行为信号，不发主题名 / palette 内容
+    track("topic_created");
     closeNewTopicModal();
     // 切到新主题
     switchToTopicPage(topic.id);
@@ -4071,7 +4109,7 @@ els.commentList.addEventListener("submit", (e) => {
   }
   const text = (form.querySelector("textarea")?.value || "").trim();
   if (!text) return;
-  routeCommentInput(commentId, text);  // 内部会 renderCommentList 重建 DOM
+  routeCommentInput(commentId, text, "card");  // 内部会 renderCommentList 重建 DOM
   // 纯批注（未进流式）→ 重建后焦点还给新输入框，方便连续记多条
   if (!state.streaming) {
     const ta = els.commentList.querySelector(`.cmt-card[data-comment-id="${commentId}"] .cc-input textarea`);

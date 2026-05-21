@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Co-Read · 论文伴读</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%E2%8A%B3%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3EC%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf_viewer.min.css">
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -12,7 +12,7 @@
   <!-- 首页：粘贴论文链接直接开始（极简入口；主题管理后置）-->
   <main id="home" class="view active">
     <div class="home-inner">
-      <h1 class="home-brand">⊳ Co-Read</h1>
+      <h1 class="home-brand">Co-Read</h1>
       <p class="tagline">粘贴论文链接，开始深度伴读。</p>
       <form id="homeLoadForm" class="load-form">
         <input type="text" id="homeUrlInput" placeholder="arXiv 链接 / 直接 PDF URL →" autocomplete="off" />
@@ -21,11 +21,7 @@
       <p class="hint">支持 arXiv 链接 / 直接 PDF URL / <label class="file-link">本地 PDF<input type="file" id="homeFileInput" accept="application/pdf" hidden></label></p>
       <div id="homeRecent" class="home-recent"></div>
       <button id="homeManageBtn" type="button" class="ghost-text home-manage">我的主题 →</button>
-      <!-- 试用声明：第三方 LLM 上传告知 + 本地保存亮点（鸭鸭定稿文案）-->
-      <p class="home-notice">
-        AI 伴读由第三方大模型驱动 —— 你打开的论文全文和提问会发送给模型服务方。
-        你的笔记、高亮、批注只存在本机浏览器，不上传、可随时导出 Markdown。
-      </p>
+      <p class="home-copyright">© 2026 duck-ai-yy</p>
     </div>
   </main>
 
@@ -205,7 +201,7 @@
          划线交互（浮出 comment 框）+ @AI 在 Block 3 接入。 -->
     <div class="reader-right">
       <header class="cmt-header">
-        <span id="cmtSummary" class="cmt-summary">⊳ 准备中…</span>
+        <span id="cmtSummary" class="cmt-summary">准备中…</span>
         <button id="readerExportBtn" type="button" class="cmt-export-btn" title="把本篇收入笔记的内容导出为 markdown">导出笔记 ↓</button>
       </header>
       <div id="commentList" class="comment-list" role="list" aria-label="comment 列表"></div>

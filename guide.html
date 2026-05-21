@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Co-Read · 试用引导</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3EC%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --ink: #1a1a1a;
+    --ink-soft: #6b6b6b;
+    --line: #ececec;
+    --accent: #1a1a1a;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "PingFang SC", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 64px 24px 80px;
+  }
+
+  /* ===== Hero ===== */
+  .hero { text-align: center; padding-bottom: 56px; border-bottom: 1px solid var(--line); }
+  .brand {
+    font-size: 2.4rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-bottom: 14px;
+  }
+  .lede {
+    color: var(--ink-soft);
+    font-size: 1.1rem;
+    max-width: 420px;
+    margin: 0 auto 32px;
+  }
+
+  /* ===== 主按钮 ===== */
+  .cta {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    font-size: 1rem;
+    font-weight: 500;
+    padding: 14px 32px;
+    border-radius: 999px;
+    transition: filter 0.15s;
+  }
+  .cta:hover { filter: brightness(1.35); }
+
+  /* ===== 段落标题 ===== */
+  .section-label {
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin: 64px 0 24px;
+  }
+
+  /* ===== 玩法卡片 ===== */
+  .feature {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .feature figure { background: var(--bg); border-bottom: 1px solid var(--line); }
+  .feature img { display: block; width: 100%; height: auto; }
+  .feature .body { padding: 32px 22px 24px; }
+  .feature h3 {
+    font-size: 1.08rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .feature h3 .num {
+    flex: 0 0 auto;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .feature p { color: var(--ink-soft); font-size: 0.95rem; }
+  .feature code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.86em;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--ink);
+  }
+
+  /* ===== 标签色点（玩法 1 的小注脚）===== */
+  .tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+  }
+  .tag-chip { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+
+  /* ===== 30 秒上手 ===== */
+  .steps { list-style: none; counter-reset: step; }
+  .steps li {
+    counter-increment: step;
+    display: flex;
+    gap: 14px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .steps li:last-child { border-bottom: none; }
+  .steps li::before {
+    content: counter(step);
+    flex: 0 0 auto;
+    width: 26px; height: 26px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.82rem;
+    font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps .step-text { padding-top: 1px; }
+  .steps .step-text strong { font-weight: 600; }
+  .steps .step-text span { color: var(--ink-soft); }
+
+  /* ===== 隐私 ===== */
+  .privacy {
+    margin-top: 40px;
+    padding: 16px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    font-size: 0.86rem;
+    line-height: 1.7;
+    color: var(--ink-soft);
+  }
+  .privacy strong { color: var(--ink); font-weight: 600; }
+
+  /* ===== 底部 ===== */
+  .foot {
+    margin-top: 64px;
+    padding-top: 48px;
+    border-top: 1px solid var(--line);
+    text-align: center;
+  }
+  .foot .contact {
+    margin-top: 20px;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+  }
+  .foot .copyright {
+    margin-top: 10px;
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    opacity: 0.7;
+  }
+
+  @media (max-width: 480px) {
+    .page { padding: 48px 18px 64px; }
+    .brand { font-size: 2rem; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Hero -->
+  <header class="hero">
+    <div class="brand">Co-Read</div>
+    <p class="lede">边读论文，边问 AI，把想法沉淀成结构化笔记。</p>
+    <a class="cta" href="https://co-read-web.onrender.com/">开始试用 →</a>
+  </header>
+
+  <!-- 30 秒上手 -->
+  <div class="section-label">30 秒上手</div>
+  <ol class="steps">
+    <li><div class="step-text"><strong>粘贴链接</strong><br><span>arXiv 链接 / 直接 PDF URL / 本地 PDF 都行。</span></div></li>
+    <li><div class="step-text"><strong>读、划线、提问</strong><br><span>选文字选颜色，写批注或 @AI 提问。</span></div></li>
+    <li><div class="step-text"><strong>右栏查看整理</strong><br><span>所有标注与讨论按标签汇总在右栏。</span></div></li>
+    <li><div class="step-text"><strong>导出笔记</strong><br><span>顶部「导出笔记」一键导出 Markdown。</span></div></li>
+  </ol>
+
+  <!-- 三个核心玩法 -->
+  <div class="section-label">三个核心玩法</div>
+
+  <article class="feature">
+    <figure>
+      <img src="/guide-assets/theme1-palette.jpeg" alt="选中论文文字后浮出的彩色标签色板">
+    </figure>
+    <div class="body">
+      <h3><span class="num">1</span>划线 = 打标签</h3>
+      <p>选中论文里的一段文字，浮出一排彩色标签 —— 选一个，这段就被标记并归类。</p>
+      <div class="tag-row">
+        <span class="tag-chip"><span class="dot" style="background:#ff5e5e"></span>看不懂</span>
+        <span class="tag-chip"><span class="dot" style="background:#54d062"></span>已掌握</span>
+        <span class="tag-chip"><span class="dot" style="background:#4a90e2"></span>重点</span>
+        <span class="tag-chip"><span class="dot" style="background:#a972e8"></span>质疑</span>
+        <span class="tag-chip"><span class="dot" style="background:#f5d042"></span>课题相关</span>
+      </div>
+    </div>
+  </article>
+
+  <article class="feature">
+    <figure>
+      <img src="/guide-assets/theme2-compose.jpeg" alt="标记后弹出的批注框，输入 @AI 即可提问">
+    </figure>
+    <div class="body">
+      <h3><span class="num">2</span>@AI 就地提问</h3>
+      <p>标记后弹出小框：直接打字 = 给自己记批注；打 <code>@AI</code> + 问题 = AI 围绕这段原文回答你。</p>
+    </div>
+  </article>
+
+  <article class="feature">
+    <figure>
+      <img src="/guide-assets/theme3-panel.jpeg" alt="右栏汇总所有标注与讨论的列表">
+    </figure>
+    <div class="body">
+      <h3><span class="num">3</span>一处管全部</h3>
+      <p>右栏汇总所有标注与讨论，点一条跳回原文；顶部一键导出 Markdown 笔记。</p>
+    </div>
+  </article>
+
+  <!-- 隐私 -->
+  <div class="privacy">
+    <strong>关于隐私：</strong>你的笔记 / 高亮 / 批注只存在你自己的浏览器里，不上传、可随时导出。论文全文和提问会发给第三方大模型（AI 功能需要）。
+  </div>
+
+  <!-- 底部 -->
+  <footer class="foot">
+    <a class="cta" href="https://co-read-web.onrender.com/">开始试用 →</a>
+    <p class="contact">有问题找 824365939@qq.com</p>
+    <p class="copyright">© 2026 duck-ai-yy</p>
+  </footer>
+
+</div>
+</body>
+</html>

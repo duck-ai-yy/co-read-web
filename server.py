@@ -94,6 +94,19 @@ async def chat(req: Request):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+@app.post("/api/event")
+async def event(req: Request):
+    """轻量行为埋点：读 JSON body，打到 stdout（前缀 [EVENT]，Render 日志可见）。
+    只记行为信号，绝不记内容。极简、绝不 500、不写文件、立即返回 204。"""
+    try:
+        body = await req.json()
+        print(f"[EVENT] {body}", flush=True)
+    except Exception:
+        # body 解析失败也安静返回，绝不报错
+        pass
+    return Response(status_code=204)
+
+
 @app.get("/api/fetch-pdf")
 async def fetch_pdf(url: str):
     """前端跨域无法直接拉 arxiv PDF —— 由后端代理"""
@@ -118,13 +131,30 @@ async def fetch_pdf(url: str):
 # 静态文件：通用 dispatcher，no-store 防止本地开发期浏览器缓存旧版
 # 同时给 index.html 里的 app.js / style.css 注入文件 mtime 做 cache-bust，
 # 这样换浏览器不会拿到老 module cache
-_STATIC_ALLOWED = {"index.html", "app.js", "style.css"}
-_MIME = {".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
+_STATIC_ALLOWED = {"index.html", "app.js", "style.css", "guide.html"}
+_MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+}
 
 
 def _bust(path: str) -> str:
     p = ROOT / path
     return f"{path}?v={int(p.stat().st_mtime)}" if p.exists() else path
+
+
+# 引导页配图：只放 guide-assets/ 下的 .jpeg —— 白名单后缀 + 拒绝路径穿越
+@app.get("/guide-assets/{fname}")
+async def guide_asset(fname: str):
+    if "/" in fname or ".." in fname or not fname.endswith(".jpeg"):
+        raise HTTPException(404)
+    p = ROOT / "guide-assets" / fname
+    if not p.exists():
+        raise HTTPException(404)
+    return Response(content=p.read_bytes(), media_type=_MIME[".jpeg"])
 
 
 @app.get("/")
