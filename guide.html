@@ -174,6 +174,33 @@
     opacity: 0.7;
   }
 
+  /* ===== 语言切换 ===== */
+  .lang-switch {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    z-index: 10;
+    display: flex;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    overflow: hidden;
+    font-size: 0.8rem;
+  }
+  .lang-switch button {
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    padding: 5px 12px;
+    cursor: pointer;
+    font: inherit;
+    transition: background 0.15s, color 0.15s;
+  }
+  .lang-switch button.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
   @media (max-width: 480px) {
     .page { padding: 48px 18px 64px; }
     .brand { font-size: 2rem; }
@@ -181,67 +208,73 @@
 </style>
 </head>
 <body>
+
+<div class="lang-switch">
+  <button id="lang-zh" type="button">中文</button>
+  <button id="lang-en" type="button">EN</button>
+</div>
+
 <div class="page">
 
   <!-- Hero -->
   <header class="hero">
     <div class="brand">Co-Read</div>
-    <p class="lede">边读论文，边问 AI，把想法沉淀成结构化笔记。</p>
-    <a class="cta" href="https://co-read-web.onrender.com/">开始试用 →</a>
+    <p class="lede" data-i18n="lede"></p>
+    <a class="cta" href="https://co-read-web.onrender.com/" data-i18n="cta"></a>
   </header>
 
   <!-- 30 秒上手 -->
-  <div class="section-label">30 秒上手</div>
+  <div class="section-label" data-i18n="quickstart"></div>
   <ol class="steps">
-    <li><div class="step-text"><strong>粘贴链接</strong><br><span>arXiv 链接 / 直接 PDF URL / 本地 PDF 都行。</span></div></li>
-    <li><div class="step-text"><strong>读、划线、提问</strong><br><span>选文字选颜色，写批注或 @AI 提问。</span></div></li>
-    <li><div class="step-text"><strong>右栏查看整理</strong><br><span>所有标注与讨论按标签汇总在右栏。</span></div></li>
-    <li><div class="step-text"><strong>导出笔记</strong><br><span>顶部「导出笔记」一键导出 Markdown。</span></div></li>
+    <li><div class="step-text"><strong data-i18n="step1t"></strong><br><span data-i18n="step1d"></span></div></li>
+    <li><div class="step-text"><strong data-i18n="step2t"></strong><br><span data-i18n="step2d"></span></div></li>
+    <li><div class="step-text"><strong data-i18n="step3t"></strong><br><span data-i18n="step3d"></span></div></li>
+    <li><div class="step-text"><strong data-i18n="step4t"></strong><br><span data-i18n="step4d"></span></div></li>
   </ol>
 
   <!-- 三个核心玩法 -->
-  <div class="section-label">三个核心玩法</div>
+  <div class="section-label" data-i18n="features"></div>
 
   <article class="feature">
     <div class="body">
-      <h3><span class="num">1</span>划线 = 打标签</h3>
-      <p>选中论文里的一段文字，浮出一排彩色标签 —— 选一个，这段就被标记并归类。</p>
+      <h3><span class="num">1</span><span data-i18n="f1t"></span></h3>
+      <p data-i18n="f1d"></p>
       <div class="tag-row">
-        <span class="tag-chip"><span class="dot" style="background:#ff5e5e"></span>看不懂</span>
-        <span class="tag-chip"><span class="dot" style="background:#54d062"></span>已掌握</span>
-        <span class="tag-chip"><span class="dot" style="background:#4a90e2"></span>重点</span>
-        <span class="tag-chip"><span class="dot" style="background:#a972e8"></span>质疑</span>
-        <span class="tag-chip"><span class="dot" style="background:#f5d042"></span>课题相关</span>
+        <span class="tag-chip"><span class="dot" style="background:#ff5e5e"></span><span data-i18n="tag1"></span></span>
+        <span class="tag-chip"><span class="dot" style="background:#54d062"></span><span data-i18n="tag2"></span></span>
+        <span class="tag-chip"><span class="dot" style="background:#4a90e2"></span><span data-i18n="tag3"></span></span>
+        <span class="tag-chip"><span class="dot" style="background:#a972e8"></span><span data-i18n="tag4"></span></span>
+        <span class="tag-chip"><span class="dot" style="background:#f5d042"></span><span data-i18n="tag5"></span></span>
       </div>
     </div>
     <figure>
-      <img src="/guide-assets/theme1-palette.jpeg" alt="选中论文文字后浮出的彩色标签色板">
+      <img src="/guide-assets/theme1-palette.jpeg" data-i18n-alt="f1alt" alt="">
     </figure>
   </article>
 
   <article class="feature">
     <div class="body">
-      <h3><span class="num">2</span>@AI 就地提问</h3>
-      <p>标记后弹出小框：直接打字 = 给自己记批注；打 <code>@AI</code> + 问题 = AI 围绕这段原文回答你。</p>
+      <h3><span class="num">2</span><span data-i18n="f2t"></span></h3>
+      <p><span data-i18n="f2d_a"></span><code>@AI</code><span data-i18n="f2d_b"></span></p>
     </div>
     <figure>
-      <img src="/guide-assets/theme2-compose.jpeg" alt="标记后弹出的批注框，输入 @AI 即可提问">
+      <img src="/guide-assets/theme2-compose.jpeg" data-i18n-alt="f2alt" alt="">
     </figure>
   </article>
 
   <article class="feature">
     <div class="body">
-      <h3><span class="num">3</span>一处管全部</h3>
-      <p>右栏汇总所有标注与讨论，点一条跳回原文；顶部一键导出 Markdown 笔记。</p>
+      <h3><span class="num">3</span><span data-i18n="f3t"></span></h3>
+      <p data-i18n="f3d"></p>
     </div>
     <figure>
-      <img src="/guide-assets/theme3-panel.jpeg" alt="右栏汇总所有标注与讨论的列表">
+      <img src="/guide-assets/theme3-panel.jpeg" data-i18n-alt="f3alt" alt="">
     </figure>
   </article>
 
   <!-- 隐私 -->
   <div class="privacy">
-    <strong>关于隐私：</strong>你的笔记 / 高亮 / 批注只存在你自己的浏览器里，不上传、可随时导出。论文全文和提问会发给第三方大模型（AI 功能需要）。
+    <strong data-i18n="privacyt"></strong><span data-i18n="privacyd"></span>
   </div>
 
   <!-- 底部 -->
@@ -250,5 +283,90 @@
   </footer>
 
 </div>
+
+<script>
+  const I18N = {
+    zh: {
+      title: "Co-Read · 试用引导",
+      lede: "边读论文，边问 AI，把想法沉淀成结构化笔记。",
+      cta: "开始试用 →",
+      quickstart: "30 秒上手",
+      step1t: "粘贴链接", step1d: "arXiv 链接 / 直接 PDF URL / 本地 PDF 都行。",
+      step2t: "读、划线、提问", step2d: "选文字选颜色，写批注或 @AI 提问。",
+      step3t: "右栏查看整理", step3d: "所有标注与讨论按标签汇总在右栏。",
+      step4t: "导出笔记", step4d: "顶部「导出笔记」一键导出 Markdown。",
+      features: "三个核心玩法",
+      f1t: "划线 = 打标签",
+      f1d: "选中论文里的一段文字，浮出一排彩色标签 —— 选一个，这段就被标记并归类。",
+      f1alt: "选中论文文字后浮出的彩色标签色板",
+      tag1: "看不懂", tag2: "已掌握", tag3: "重点", tag4: "质疑", tag5: "课题相关",
+      f2t: "@AI 就地提问",
+      f2d_a: "标记后弹出小框：直接打字 = 给自己记批注；打 ",
+      f2d_b: " + 问题 = AI 围绕这段原文回答你。",
+      f2alt: "标记后弹出的批注框，输入 @AI 即可提问",
+      f3t: "一处管全部",
+      f3d: "右栏汇总所有标注与讨论，点一条跳回原文；顶部一键导出 Markdown 笔记。",
+      f3alt: "右栏汇总所有标注与讨论的列表",
+      privacyt: "关于隐私：",
+      privacyd: "你的笔记 / 高亮 / 批注只存在你自己的浏览器里，不上传、可随时导出。论文全文和提问会发给第三方大模型（AI 功能需要）。"
+    },
+    en: {
+      title: "Co-Read · Getting Started",
+      lede: "Read papers, ask the AI as you go, and turn ideas into structured notes.",
+      cta: "Start trying it →",
+      quickstart: "Up and running in 30 seconds",
+      step1t: "Paste a link", step1d: "An arXiv link, a direct PDF URL, or a local PDF — all work.",
+      step2t: "Read, highlight, ask", step2d: "Select text, pick a color, write a note or ask with @AI.",
+      step3t: "Review in the right panel", step3d: "Every annotation and discussion is grouped by tag in the right panel.",
+      step4t: "Export your notes", step4d: "Hit “Export Notes” at the top to export Markdown in one click.",
+      features: "Three core features",
+      f1t: "Highlight = tag",
+      f1d: "Select a passage in the paper and a row of colored tags appears — pick one, and the passage is marked and categorized.",
+      f1alt: "Colored tag palette that pops up after selecting text in the paper",
+      tag1: "Don't get it", tag2: "Got it", tag3: "Key point", tag4: "Questionable", tag5: "Topic-related",
+      f2t: "Ask @AI in place",
+      f2d_a: "After tagging, a small box pops up: just type = a note for yourself; type ",
+      f2d_b: " + a question = the AI answers it based on that passage.",
+      f2alt: "Annotation box that pops up after tagging; type @AI to ask",
+      f3t: "Everything in one place",
+      f3d: "The right panel aggregates every annotation and discussion; click an entry to jump back to the source. Export Markdown notes in one click from the top.",
+      f3alt: "The right panel listing all annotations and discussions",
+      privacyt: "About privacy: ",
+      privacyd: "Your notes / highlights / annotations live only in your own browser — never uploaded, exportable anytime. The full paper text and your questions are sent to a third-party large language model (required for the AI features)."
+    }
+  };
+
+  function applyLang(lang) {
+    const dict = I18N[lang] || I18N.zh;
+    document.documentElement.lang = lang === "en" ? "en" : "zh";
+    document.title = dict.title;
+    document.querySelectorAll("[data-i18n]").forEach(el => {
+      const v = dict[el.dataset.i18n];
+      if (v != null) el.textContent = v;
+    });
+    document.querySelectorAll("[data-i18n-alt]").forEach(el => {
+      const v = dict[el.dataset.i18nAlt];
+      if (v != null) el.alt = v;
+    });
+    document.getElementById("lang-zh").classList.toggle("active", lang !== "en");
+    document.getElementById("lang-en").classList.toggle("active", lang === "en");
+  }
+
+  function setLang(lang) {
+    try { localStorage.setItem("coread_lang", lang); } catch (e) {}
+    applyLang(lang);
+  }
+
+  let initial = "zh";
+  try {
+    const saved = localStorage.getItem("coread_lang");
+    if (saved === "en" || saved === "zh") initial = saved;
+  } catch (e) {}
+
+  document.getElementById("lang-zh").addEventListener("click", () => setLang("zh"));
+  document.getElementById("lang-en").addEventListener("click", () => setLang("en"));
+  applyLang(initial);
+</script>
+
 </body>
 </html>

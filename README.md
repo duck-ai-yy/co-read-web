@@ -1,3 +1,5 @@
+[English](README.en.md)
+
 # Co-Read · 论文伴读
 
 边读论文，边和 AI 讨论，把零散想法沉淀成结构化笔记。

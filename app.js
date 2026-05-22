@@ -36,6 +36,374 @@ function track(event, meta) {
 }
 track("session_start");
 
+// ────────────────────── i18n（中/英语言切换）──────────────────────
+// 语言存 localStorage（key: coread_lang，值 zh / en），默认 zh。
+// I18N 字符串表只覆盖 app 自带界面文案 + 默认/示例内容；用户自建数据保持原文。
+const LANG_KEY = "coread_lang";
+function getLang() {
+  try {
+    const v = localStorage.getItem(LANG_KEY);
+    return v === "en" ? "en" : "zh";
+  } catch (_) { return "zh"; }
+}
+function setLang(lang) {
+  const v = lang === "en" ? "en" : "zh";
+  try { localStorage.setItem(LANG_KEY, v); } catch (_) {}
+}
+let LANG = getLang();
+
+const I18N = {
+  zh: {
+    htmlLang: "zh",
+    docTitle: "Co-Read · 论文伴读",
+    // 首页
+    tagline: "粘贴论文链接，开始深度伴读。",
+    homeUrlPlaceholder: "arXiv 链接 / 直接 PDF URL →",
+    homeSubmitAria: "开始伴读",
+    homeHintPrefix: "支持 arXiv 链接 / 直接 PDF URL / ",
+    fileLinkLabel: "本地 PDF",
+    homeManage: "我的主题 →",
+    recentHead: "最近在读",
+    exampleBadge: "示例",
+    // 主题列表
+    topicListBack: "← 首页",
+    topicsTitle: "主题",
+    topicsTagline: "每个主题 = 一组论文 + 一套冻结色板 + 一份导出笔记。",
+    newTopicBtn: "+ 新建主题",
+    // 主题页
+    topicBackAria: "返回主题列表",
+    tpPaletteTitle: "主题创建后色板不可修改",
+    tpUrlPlaceholder: "粘贴论文链接，加入本主题 →",
+    tpSubmitAria: "加入主题",
+    tpExportBtn: "[导出笔记]",
+    tpExportTitle: "导出本主题为 markdown 笔记",
+    tpExportEmptyTitle: "主题里还没有论文",
+    tpPdfCount: (n) => `${n} 篇`,
+    tpEmptyPdf: "还没有论文。粘贴一个链接或选本地 PDF 开始读。",
+    tpMoreActions: "更多操作",
+    tpRemoveTitle: "从本主题移除（不删 annotation 数据）",
+    tpRemoveAria: "移除",
+    tpRenameAria: "重命名主题",
+    readerTopicHintTitle: (name) => `点击重命名（当前：${name}）`,
+    // 新建主题 modal
+    ntmTitle: "新建主题",
+    ntmCancelAria: "取消",
+    ntmNameLabel: "主题名（≤ 30 字）",
+    ntmNamePlaceholder: "例如：LLM 综述 / 博士开题",
+    ntmHintExample: 'e.g. "RAG 评估" / "我的研究方向"',
+    ntmHintWarn: "⚠ 创建后整套色板将完全冻结",
+    ntmAddRow: "+ 添加一行",
+    ntmConfirmText: "即将创建主题：",
+    ntmWarn: "⚠ 创建后 palette 不可改。确认创建？",
+    ntmStepIndicator: (s) => `第 ${s} / 3 步`,
+    ntmPrev: "← 上一步",
+    ntmNext: "下一步 →",
+    ntmConfirm: "确认创建",
+    ntmUnnamedName: "(未命名)",
+    ntmUnnamedTag: "(未命名标签)",
+    ntmTagColorTitle: "标签颜色（创建后冻结）",
+    ntmTagPlaceholder: "标签 ≤ 20 字",
+    ntmDelRowTitle: "删除此行",
+    ntmNewTagLabel: "新标签",
+    // 主题卡片菜单
+    cardRename: "重命名",
+    cardDelete: "删除主题",
+    // loading
+    loadingDefault: "加载中…",
+    loadingFetchPdf: "正在拉取 PDF…",
+    loadingParse: (total, done) => `正在解析正文（共 ${total} 页，${done}/${total}）…`,
+    loadFailed: (msg) => `加载失败：${msg}`,
+    // 阅读器
+    backReaderAria: "返回主题页",
+    zoomAria: "缩放",
+    zoomOut: "缩小",
+    zoomIn: "放大",
+    zoomPreset: "缩放预设",
+    zoomFitWidth: "适合宽度",
+    zoomFitPage: "适合页面",
+    findPlaceholder: "搜索…",
+    findPrevAria: "上一个匹配",
+    findPrevTitle: "上一个 (Shift+Enter)",
+    findNextAria: "下一个匹配",
+    findNextTitle: "下一个 (Enter)",
+    findCloseAria: "清空搜索",
+    findCloseTitle: "清空",
+    findDropdownAria: "搜索结果预览",
+    findParsing: "正在解析正文…",
+    findNoMatch: "无匹配",
+    findCountCapped: (n, max) => `共 ${n}+ 处（仅显示前 ${max}）`,
+    findCount: (n) => `共 ${n} 处匹配`,
+    thumbSidebarAria: "页面缩略图",
+    thumbPageAria: (i) => `第 ${i} 页`,
+    colorPaletteAria: "高亮颜色选择",
+    cmtComposePlaceholder: "写批注…  输入 @ 可召唤 AI",
+    cmtComposeSend: "发送",
+    cmtComposeStop: "停止",
+    cmtSummaryPreparing: "准备中…",
+    cmtSummaryEmpty: "还没有 comment —— 划线选色即可建一条",
+    cmtSummaryCount: (n) => `${n} 条 comment`,
+    commentListAria: "comment 列表",
+    readerExportBtn: "导出笔记 ↓",
+    readerExportTitle: "把本篇收入笔记的内容导出为 markdown",
+    cmtTagFallback: "标签",
+    cmtFulltextLabel: "全文",
+    cmtFulltextQuote: "全文导读",
+    cmtNoQuote: "(无原文)",
+    cmtDelTitle: "删除这条高亮 + 讨论",
+    cmtDelAria: "删除 comment",
+    cmtShowHidden: (n) => `··· 展开折叠的 ${n} 条 ···`,
+    roleUser: "你",
+    roleAgent: "Agent",
+    roleUserColon: "你：",
+    roleAgentColon: "Agent：",
+    noteInclude: "收入笔记",
+    citeJumpTitle: (n) => `跳到第 ${n} 页`,
+    confirmDeleteComment: (n) => `删除这条 comment？\n高亮原文 + ${n} 条讨论将一并清除（不可撤销）。`,
+    promptRenameTopic: "新的主题名（≤ 30 字）：",
+    confirmDeleteTopic: (name, n) =>
+      `确认删除主题"${name}"？\n` +
+      `${n > 0 ? `该主题下的 ${n} 篇论文 + 围绕它们的所有 annotation / 讨论将一并清除。\n` : ""}` +
+      `（不可撤销）`,
+    createTopicFailed: (msg) => `创建主题失败：${msg}`,
+    localFileError: "本地文件无法保存，请重新选择 PDF 文件。",
+    unknownPdfKey: (k) => `未知 PDF key 格式: ${k}`,
+    // 导出页
+    exportBackAria: "返回",
+    exportTitle: "导出笔记",
+    exportDownload: "下载 .md",
+    exportScopeLabel: "范围",
+    exportScopeCurrent: "当前篇",
+    exportScopeTopic: "整个主题",
+    exportGroupLabel: "分组",
+    exportGroupTag: "按标签",
+    exportGroupReading: "按阅读顺序",
+    exportPreviewHint: "预览 —— 勾选要收入的内容，取消的不导出",
+    exportPreviewFailed: "预览加载失败",
+    exportNothing: "没有可导出的内容",
+    exportEmptyPdf: "（这一篇暂无笔记）",
+    exportSelectAll: "全选",
+    exportDeselectAll: "全部取消",
+    exportFulltextGroup: "📄 全文导读",
+    exportOtherGroup: "其它",
+    exportNoteFallback: "笔记",
+    // 导出 markdown
+    mdFulltext: "### 📄 全文导读",
+    mdHighlightNotes: "### 划线笔记",
+    mdOther: "### 其它",
+    mdEmptyNote: "_（暂无笔记 —— 划线标记或 @AI 讨论后再导出）_",
+    mdExportTime: (now, sub) => `> 导出时间 ${now} · ${sub}`,
+    mdTagsLine: (tags) => `> 标签：${tags}`,
+    mdTopicNoteTitle: (name) => `主题笔记：${name}`,
+    mdTopicNoPdf: "_（主题里还没有论文）_",
+    mdAnnReadFailed: "_（annotation 数据读取失败）_",
+    mdNoteTitle: (title) => `笔记：${title}`,
+    mdSubTopicPrefix: (name) => `主题 ${name} · `,
+    mdSubGroupBody: (sub) => `收入笔记的内容，${sub}`,
+    mdGroupReading: "按阅读顺序",
+    mdGroupTag: "按标签归类",
+    mdRoleUser: "**你**",
+    mdRoleAgent: "**Agent**",
+    mdExportTitlePrefix: (title) => `# 笔记：${title}`,
+    // 错误
+    errNotStream: "上游返回的不是流式响应。",
+    errEmptyContent: "上游返回空内容（可能被安全过滤或额度耗尽）。",
+    errBadFormat: "⚠ 上游返回格式异常（详情见 console）",
+    errTopicNotExist: "主题不存在",
+    aborted: "_（已中止）_",
+    unnamedTopic: "未命名主题",
+    unnamedPdf: "(未命名)",
+    // 时间
+    timeJustNow: "刚刚",
+    timeMinAgo: (n) => `${n} 分钟前`,
+    timeHourAgo: (n) => `${n} 小时前`,
+    timeDayAgo: (n) => `${n} 天前`,
+    // @ 联想
+    mentionAria: "@ 联想",
+    mentionAiHint: "召唤 AI 回复",
+    // AI 提问
+    primeKeyword: "核心总结",
+    defaultQMain: () => `请给这篇论文一个 100 字以内的核心总结（What / Why / How / Result）。`,
+    defaultQHighlight: "请帮我解读这段划线原文。",
+    annContextNote: (page, text) =>
+      `用户正在讨论第 ${page} 的一段划线原文：\n"""${text}"""\n回答请围绕这段原文。`,
+    // 语言开关
+    langSwitchAria: "语言 / Language",
+    // 示例条目
+    exampleRecentTitle: "Clio 论文（点开看 co-read 怎么用）",
+    defaultTopicName: "示例主题",
+  },
+  en: {
+    htmlLang: "en",
+    docTitle: "Co-Read · Paper Companion",
+    tagline: "Paste a paper link to start deep reading.",
+    homeUrlPlaceholder: "arXiv link / direct PDF URL →",
+    homeSubmitAria: "Start reading",
+    homeHintPrefix: "Supports arXiv link / direct PDF URL / ",
+    fileLinkLabel: "local PDF",
+    homeManage: "My topics →",
+    recentHead: "Recently reading",
+    exampleBadge: "Example",
+    topicListBack: "← Home",
+    topicsTitle: "Topics",
+    topicsTagline: "Each topic = a set of papers + a frozen palette + an exported note.",
+    newTopicBtn: "+ New topic",
+    topicBackAria: "Back to topic list",
+    tpPaletteTitle: "The palette cannot be changed after the topic is created",
+    tpUrlPlaceholder: "Paste a paper link to add to this topic →",
+    tpSubmitAria: "Add to topic",
+    tpExportBtn: "[Export note]",
+    tpExportTitle: "Export this topic as a markdown note",
+    tpExportEmptyTitle: "No papers in this topic yet",
+    tpPdfCount: (n) => `${n} paper${n === 1 ? "" : "s"}`,
+    tpEmptyPdf: "No papers yet. Paste a link or pick a local PDF to start reading.",
+    tpMoreActions: "More actions",
+    tpRemoveTitle: "Remove from this topic (annotation data is kept)",
+    tpRemoveAria: "Remove",
+    tpRenameAria: "Rename topic",
+    readerTopicHintTitle: (name) => `Click to rename (current: ${name})`,
+    ntmTitle: "New topic",
+    ntmCancelAria: "Cancel",
+    ntmNameLabel: "Topic name (≤ 30 chars)",
+    ntmNamePlaceholder: "e.g. LLM survey / PhD proposal",
+    ntmHintExample: 'e.g. "RAG evaluation" / "My research direction"',
+    ntmHintWarn: "⚠ The whole palette will be fully frozen after creation",
+    ntmAddRow: "+ Add a row",
+    ntmConfirmText: "About to create topic:",
+    ntmWarn: "⚠ The palette cannot be changed after creation. Confirm?",
+    ntmStepIndicator: (s) => `Step ${s} / 3`,
+    ntmPrev: "← Back",
+    ntmNext: "Next →",
+    ntmConfirm: "Create",
+    ntmUnnamedName: "(unnamed)",
+    ntmUnnamedTag: "(unnamed tag)",
+    ntmTagColorTitle: "Tag color (frozen after creation)",
+    ntmTagPlaceholder: "Tag ≤ 20 chars",
+    ntmDelRowTitle: "Delete this row",
+    ntmNewTagLabel: "New tag",
+    cardRename: "Rename",
+    cardDelete: "Delete topic",
+    loadingDefault: "Loading…",
+    loadingFetchPdf: "Fetching PDF…",
+    loadingParse: (total, done) => `Parsing text (${total} pages, ${done}/${total})…`,
+    loadFailed: (msg) => `Load failed: ${msg}`,
+    backReaderAria: "Back to topic page",
+    zoomAria: "Zoom",
+    zoomOut: "Zoom out",
+    zoomIn: "Zoom in",
+    zoomPreset: "Zoom presets",
+    zoomFitWidth: "Fit width",
+    zoomFitPage: "Fit page",
+    findPlaceholder: "Search…",
+    findPrevAria: "Previous match",
+    findPrevTitle: "Previous (Shift+Enter)",
+    findNextAria: "Next match",
+    findNextTitle: "Next (Enter)",
+    findCloseAria: "Clear search",
+    findCloseTitle: "Clear",
+    findDropdownAria: "Search results preview",
+    findParsing: "Parsing text…",
+    findNoMatch: "No matches",
+    findCountCapped: (n, max) => `${n}+ matches (showing first ${max})`,
+    findCount: (n) => `${n} matches`,
+    thumbSidebarAria: "Page thumbnails",
+    thumbPageAria: (i) => `Page ${i}`,
+    colorPaletteAria: "Highlight color picker",
+    cmtComposePlaceholder: "Write a note…  type @ to summon AI",
+    cmtComposeSend: "Send",
+    cmtComposeStop: "Stop",
+    cmtSummaryPreparing: "Preparing…",
+    cmtSummaryEmpty: "No comments yet — highlight and pick a color to create one",
+    cmtSummaryCount: (n) => `${n} comment${n === 1 ? "" : "s"}`,
+    commentListAria: "Comment list",
+    readerExportBtn: "Export note ↓",
+    readerExportTitle: "Export the note-included content of this paper as markdown",
+    cmtTagFallback: "Tag",
+    cmtFulltextLabel: "Full text",
+    cmtFulltextQuote: "Full-text overview",
+    cmtNoQuote: "(no source text)",
+    cmtDelTitle: "Delete this highlight + discussion",
+    cmtDelAria: "Delete comment",
+    cmtShowHidden: (n) => `··· Show ${n} collapsed ···`,
+    roleUser: "You",
+    roleAgent: "Agent",
+    roleUserColon: "You: ",
+    roleAgentColon: "Agent: ",
+    noteInclude: "Include in note",
+    citeJumpTitle: (n) => `Jump to page ${n}`,
+    confirmDeleteComment: (n) => `Delete this comment?\nThe highlighted text + ${n} discussion message(s) will be removed (cannot be undone).`,
+    promptRenameTopic: "New topic name (≤ 30 chars):",
+    confirmDeleteTopic: (name, n) =>
+      `Delete topic "${name}"?\n` +
+      `${n > 0 ? `The ${n} paper(s) in this topic and all their annotations / discussions will be removed.\n` : ""}` +
+      `(cannot be undone)`,
+    createTopicFailed: (msg) => `Failed to create topic: ${msg}`,
+    localFileError: "Local files cannot be saved, please re-select the PDF file.",
+    unknownPdfKey: (k) => `Unknown PDF key format: ${k}`,
+    exportBackAria: "Back",
+    exportTitle: "Export note",
+    exportDownload: "Download .md",
+    exportScopeLabel: "Scope",
+    exportScopeCurrent: "Current paper",
+    exportScopeTopic: "Whole topic",
+    exportGroupLabel: "Group by",
+    exportGroupTag: "By tag",
+    exportGroupReading: "By reading order",
+    exportPreviewHint: "Preview — check items to include, unchecked items are excluded",
+    exportPreviewFailed: "Failed to load preview",
+    exportNothing: "Nothing to export",
+    exportEmptyPdf: "(no notes for this paper yet)",
+    exportSelectAll: "Select all",
+    exportDeselectAll: "Deselect all",
+    exportFulltextGroup: "📄 Full-text overview",
+    exportOtherGroup: "Other",
+    exportNoteFallback: "Note",
+    mdFulltext: "### 📄 Full-text overview",
+    mdHighlightNotes: "### Highlight notes",
+    mdOther: "### Other",
+    mdEmptyNote: "_(No notes yet — highlight or discuss with @AI, then export)_",
+    mdExportTime: (now, sub) => `> Exported ${now} · ${sub}`,
+    mdTagsLine: (tags) => `> Tags: ${tags}`,
+    mdTopicNoteTitle: (name) => `Topic note: ${name}`,
+    mdTopicNoPdf: "_(No papers in this topic yet)_",
+    mdAnnReadFailed: "_(Failed to read annotation data)_",
+    mdNoteTitle: (title) => `Note: ${title}`,
+    mdSubTopicPrefix: (name) => `Topic ${name} · `,
+    mdSubGroupBody: (sub) => `Note-included content, ${sub}`,
+    mdGroupReading: "by reading order",
+    mdGroupTag: "grouped by tag",
+    mdRoleUser: "**You**",
+    mdRoleAgent: "**Agent**",
+    mdExportTitlePrefix: (title) => `# Note: ${title}`,
+    errNotStream: "The upstream response is not a stream.",
+    errEmptyContent: "The upstream returned empty content (possibly filtered by safety or quota exhausted).",
+    errBadFormat: "⚠ Unexpected upstream response format (see console for details)",
+    errTopicNotExist: "Topic does not exist",
+    aborted: "_(aborted)_",
+    unnamedTopic: "Untitled topic",
+    unnamedPdf: "(untitled)",
+    timeJustNow: "just now",
+    timeMinAgo: (n) => `${n} min ago`,
+    timeHourAgo: (n) => `${n} hr ago`,
+    timeDayAgo: (n) => `${n} day${n === 1 ? "" : "s"} ago`,
+    mentionAria: "@ suggestions",
+    mentionAiHint: "Summon AI to reply",
+    primeKeyword: "core summary",
+    defaultQMain: () =>
+      `Please give a core summary of this paper in under 100 words (What / Why / How / Result). Respond in English.`,
+    defaultQHighlight: "Please help me interpret this highlighted text. Respond in English.",
+    annContextNote: (page, text) =>
+      `The user is discussing a highlighted passage on ${page}:\n"""${text}"""\nAnswer focused on this passage.`,
+    langSwitchAria: "语言 / Language",
+    exampleRecentTitle: "Clio paper (open it to see how co-read works)",
+    defaultTopicName: "Sample topic",
+  },
+};
+// 取当前语言字符串：t("key") 或 t("key", ...args) 对函数型条目求值
+function t(key, ...args) {
+  const v = (I18N[LANG] && I18N[LANG][key]) ?? (I18N.zh[key]);
+  return typeof v === "function" ? v(...args) : v;
+}
+
 // ────────────────────── state ──────────────────────
 // v2-b：对话 thread 化
 //   threads: { id → { id, annotationId, anchorPage, anchorColor, label, quotedText, messages, createdAt } }
@@ -253,7 +621,137 @@ const els = {
   zoomIn: $("zoomIn"),
   zoomLevel: $("zoomLevel"),
   zoomMenu: $("zoomMenu"),
+  // 语言切换控件（首页 + 阅读器）
+  langSwitchHome: $("langSwitchHome"),
 };
+
+// ────────────────────── i18n：静态 HTML 文案应用 ──────────────────────
+// 把 index.html 里写死的中文 UI 文案按当前语言重写一遍。
+// 切换语言时也调用 —— 纯文本/属性替换，不动 DOM 结构、不碰已加载论文 / 标注。
+function applyStaticI18n() {
+  document.documentElement.setAttribute("lang", t("htmlLang"));
+  document.title = t("docTitle");
+  const setText = (sel, val) => { const e = document.querySelector(sel); if (e) e.textContent = val; };
+  const setAttr = (sel, attr, val) => { const e = document.querySelector(sel); if (e) e.setAttribute(attr, val); };
+  // 首页
+  setText(".tagline", t("tagline"));
+  setAttr("#homeUrlInput", "placeholder", t("homeUrlPlaceholder"));
+  setAttr("#homeLoadForm button", "aria-label", t("homeSubmitAria"));
+  const homeHint = document.querySelector("#home .hint");
+  if (homeHint) {
+    homeHint.firstChild && (homeHint.firstChild.textContent = t("homeHintPrefix"));
+    const fl = homeHint.querySelector(".file-link");
+    if (fl) fl.firstChild && (fl.firstChild.textContent = t("fileLinkLabel"));
+  }
+  setText("#homeManageBtn", t("homeManage"));
+  // 主题列表
+  setText("#topicListBack", t("topicListBack"));
+  setText(".topics-header h1", t("topicsTitle"));
+  setText(".topics-header .tagline", t("topicsTagline"));
+  setText("#newTopicBtn", t("newTopicBtn"));
+  // 主题页
+  setAttr("#topicBack", "aria-label", t("topicBackAria"));
+  setAttr("#topicBack", "title", t("topicBackAria"));
+  setAttr("#tpPaletteRow", "title", t("tpPaletteTitle"));
+  setAttr("#tpUrlInput", "placeholder", t("tpUrlPlaceholder"));
+  setAttr("#tpLoadForm button", "aria-label", t("tpSubmitAria"));
+  const tpHint = document.querySelector("#topicPage .hint");
+  if (tpHint) {
+    tpHint.firstChild && (tpHint.firstChild.textContent = t("homeHintPrefix"));
+    const fl = tpHint.querySelector(".file-link");
+    if (fl) fl.firstChild && (fl.firstChild.textContent = t("fileLinkLabel"));
+  }
+  setText("#tpExportBtn", t("tpExportBtn"));
+  // 新建主题 modal
+  setText("#ntmTitle", t("ntmTitle"));
+  setAttr("#ntmClose", "aria-label", t("ntmCancelAria"));
+  setText("#ntmStep1 .ntm-label", t("ntmNameLabel"));
+  setAttr("#ntmNameInput", "placeholder", t("ntmNamePlaceholder"));
+  setText("#ntmStep1 .ntm-hint", t("ntmHintExample"));
+  setText("#ntmStep2 .ntm-hint-warn", t("ntmHintWarn"));
+  setText("#ntmAddRow", t("ntmAddRow"));
+  setText("#ntmStep3 .ntm-confirm-text", t("ntmConfirmText"));
+  setText("#ntmStep3 .ntm-warn", t("ntmWarn"));
+  setText("#ntmPrev", t("ntmPrev"));
+  setText("#ntmNext", t("ntmNext"));
+  setText("#ntmConfirm", t("ntmConfirm"));
+  // 主题卡片菜单
+  setText('#topicCardMenu [data-action="rename"]', t("cardRename"));
+  setText('#topicCardMenu [data-action="delete"]', t("cardDelete"));
+  // 阅读器 toolbar
+  setAttr("#backHome", "aria-label", t("backReaderAria"));
+  setAttr("#backHome", "title", t("backReaderAria"));
+  setAttr(".zoom-bar", "aria-label", t("zoomAria"));
+  setAttr("#zoomOut", "aria-label", t("zoomOut"));
+  setAttr("#zoomOut", "title", t("zoomOut"));
+  setAttr("#zoomIn", "aria-label", t("zoomIn"));
+  setAttr("#zoomIn", "title", t("zoomIn"));
+  setAttr("#zoomLevel", "title", t("zoomPreset"));
+  setAttr("#zoomMenu", "aria-label", t("zoomPreset"));
+  setText('#zoomMenu [data-scale="page-width"]', t("zoomFitWidth"));
+  setText('#zoomMenu [data-scale="page-fit"]', t("zoomFitPage"));
+  setAttr("#findInput", "placeholder", t("findPlaceholder"));
+  setAttr("#findPrev", "aria-label", t("findPrevAria"));
+  setAttr("#findPrev", "title", t("findPrevTitle"));
+  setAttr("#findNext", "aria-label", t("findNextAria"));
+  setAttr("#findNext", "title", t("findNextTitle"));
+  setAttr("#findClose", "aria-label", t("findCloseAria"));
+  setAttr("#findClose", "title", t("findCloseTitle"));
+  setAttr("#findDropdown", "aria-label", t("findDropdownAria"));
+  setAttr("#thumbnailSidebar", "aria-label", t("thumbSidebarAria"));
+  setAttr("#colorPalette", "aria-label", t("colorPaletteAria"));
+  setAttr("#cmtComposeInput", "placeholder", t("cmtComposePlaceholder"));
+  // cmtComposeSend 文案在流式态会被改，非流式时同步
+  if (!state.streaming) setText("#cmtComposeSend", t("cmtComposeSend"));
+  setAttr("#commentList", "aria-label", t("commentListAria"));
+  setText("#readerExportBtn", t("readerExportBtn"));
+  setAttr("#readerExportBtn", "title", t("readerExportTitle"));
+  // 导出页
+  setAttr("#exportBack", "aria-label", t("exportBackAria"));
+  setAttr("#exportBack", "title", t("exportBackAria"));
+  setText(".export-title", t("exportTitle"));
+  setText("#exportDownloadBtn", t("exportDownload"));
+  const sLabels = document.querySelectorAll(".export-setting-label");
+  if (sLabels[0]) sLabels[0].textContent = t("exportScopeLabel");
+  if (sLabels[1]) sLabels[1].textContent = t("exportGroupLabel");
+  setText('.export-radio input[value="current"] + span', t("exportScopeCurrent"));
+  setText('.export-radio input[value="topic"] + span', t("exportScopeTopic"));
+  setText('.export-radio input[value="tag"] + span', t("exportGroupTag"));
+  setText('.export-radio input[value="reading"] + span', t("exportGroupReading"));
+  setText(".export-preview-hint", t("exportPreviewHint"));
+  // 语言切换控件本身
+  setAttr("#langSwitchHome", "aria-label", t("langSwitchAria"));
+  refreshLangSwitchUI();
+}
+
+// 语言切换控件视觉：高亮当前语言
+function refreshLangSwitchUI() {
+  for (const sw of [els.langSwitchHome]) {
+    if (!sw) continue;
+    sw.querySelectorAll("button[data-lang]").forEach((b) => {
+      b.classList.toggle("active", b.dataset.lang === LANG);
+      b.setAttribute("aria-pressed", b.dataset.lang === LANG ? "true" : "false");
+    });
+  }
+}
+
+// 切换语言：写 localStorage → 重渲所有动态 UI（不破坏 reader / 已加载论文 / 标注）
+function switchLang(lang) {
+  const v = lang === "en" ? "en" : "zh";
+  if (v === LANG) return;
+  LANG = v;
+  setLang(v);
+  track("lang_switch", { lang: v });
+  applyStaticI18n();
+  // 动态视图重渲：每个 render 函数内部都读 t()，重调即可
+  try { renderHomeRecent(); } catch (_) {}
+  try { renderTopicGrid(); } catch (_) {}
+  try { if (state.topics[state.currentTopicId]) renderTopicPage(state.topics[state.currentTopicId]); } catch (_) {}
+  try { renderCommentList(); } catch (_) {}
+  try { updateCommentSummary(); } catch (_) {}
+  try { renderColorPalette(); } catch (_) {}
+  try { if (state.view === "exportPage") refreshExportPreview(); } catch (_) {}
+}
 
 // ────────────────────── pdfRenderer ──────────────────────
 // PDF.js 官方 viewer 三件套（一次性创建，整个 app 生命周期复用）：
@@ -321,7 +819,7 @@ window.addEventListener("resize", () => {
 
 async function loadPdf({ url, file, topicId }) {
   resetReaderState();
-  showLoadingMask("正在拉取 PDF…");
+  showLoadingMask(t("loadingFetchPdf"));
   // v3-α: 确保启动期 bootstrap（默认主题 + annotation migration）已跑完
   // 防御：bootstrap promise 已在模块顶层 fire；这里 await 让首次 loadPdf 不抢跑
   // 失败的 bootstrap 已被 catch 吞掉，不会卡住此处
@@ -330,7 +828,7 @@ async function loadPdf({ url, file, topicId }) {
   if (!state.topics[DEFAULT_TOPIC_ID]) {
     state.topics[DEFAULT_TOPIC_ID] = {
       id: DEFAULT_TOPIC_ID,
-      name: "默认主题",
+      name: "示例主题",
       palette: DEFAULT_PALETTE.map((p) => ({ ...p })),
       pdfKeys: [],
       createdAt: new Date().toISOString(),
@@ -380,7 +878,7 @@ async function loadPdf({ url, file, topicId }) {
       console.warn("[addPdfToTopic]", e)
     );
 
-    showLoadingMask(`正在解析正文（共 ${state.totalPages} 页，0/${state.totalPages}）…`);
+    showLoadingMask(t("loadingParse", state.totalPages, 0));
     switchToReader();
     els.pdfTitle.textContent = title;
     els.pdfTitle.title = title;
@@ -450,7 +948,7 @@ async function loadPdf({ url, file, topicId }) {
     }).catch((e) => console.warn("[loadAnnotations]", e));
 
     await extractAllText((i, n) => {
-      showLoadingMask(`正在解析正文（共 ${n} 页，${i}/${n}）…`);
+      showLoadingMask(t("loadingParse", n, i));
     });
     hideLoadingMask();
     // v6：自动核心总结进「全文 comment」(main)
@@ -458,7 +956,7 @@ async function loadPdf({ url, file, topicId }) {
   } catch (e) {
     console.error("[loadPdf]", e);
     hideLoadingMask();
-    const msg = `加载失败：${e.message || e}`;
+    const msg = t("loadFailed", e.message || e);
     // 已切到 reader 的情况下，回退到来源主题页（用户看到错误能立刻重试）
     if (els.reader.classList.contains("active")) {
       switchToTopicPage(state.readerFromTopicId || DEFAULT_TOPIC_ID);
@@ -473,7 +971,7 @@ async function loadPdf({ url, file, topicId }) {
 
 // 整页 loading mask：拉取 / 解析期间挡住整个视口，挡掉用户乱点
 function showLoadingMask(text) {
-  els.loadingText.textContent = text || "加载中…";
+  els.loadingText.textContent = text || t("loadingDefault");
   els.loadingMask.hidden = false;
 }
 function hideLoadingMask() {
@@ -621,7 +1119,7 @@ function renderFindDropdown(query) {
     dd.replaceChildren();
     const tip = document.createElement("div");
     tip.className = "find-result-empty";
-    tip.textContent = "正在解析正文…";
+    tip.textContent = t("findParsing");
     dd.appendChild(tip);
     dd.hidden = false;
     return;
@@ -632,14 +1130,14 @@ function renderFindDropdown(query) {
   const head = document.createElement("div");
   head.className = "find-result-head";
   if (results.length === 0) {
-    head.textContent = "无匹配";
+    head.textContent = t("findNoMatch");
     dd.appendChild(head);
     dd.hidden = false;
     return;
   }
   head.textContent = truncated
-    ? `共 ${results.length}+ 处（仅显示前 ${FIND_DD_MAX}）`
-    : `共 ${results.length} 处匹配`;
+    ? t("findCountCapped", results.length, FIND_DD_MAX)
+    : t("findCount", results.length);
   dd.appendChild(head);
   // 结果项
   for (const r of results) {
@@ -739,6 +1237,67 @@ const DEFAULT_PALETTE = [
 ];
 const DEFAULT_TOPIC_ID = "default";
 
+// 默认/示例色板的 6 个内置标签：双语 label。
+// 仅用于「默认主题」+「示例主题」—— 用户自建主题的自定义标签不在此表，保持原文。
+// 切语言时按 tag.id 查表翻译 label（zh ↔ en 互认，避免把用户编辑过的标签误翻）。
+const DEFAULT_TAG_LABELS = {
+  red:    { zh: "没懂",   en: "Confused" },
+  yellow: { zh: "重点",   en: "Key point" },
+  blue:   { zh: "可借鉴", en: "Reusable" },
+  purple: { zh: "存疑",   en: "Doubtful" },
+  green:  { zh: "要引用", en: "To cite" },
+  gray:   { zh: "待查",   en: "To verify" },
+};
+const DEFAULT_TAG_AIHINTS = {
+  red: {
+    zh: "把这段彻底讲透，用最简单的话拆解，确认他懂了再停",
+    en: "Explain this passage thoroughly in the simplest terms; don't stop until they get it",
+  },
+  yellow: {
+    zh: "帮他把这段压缩成能直接进笔记的精炼表述",
+    en: "Help compress this passage into a concise statement ready for notes",
+  },
+  blue: {
+    zh: "帮他想清楚这个方法/思路怎么迁移到他自己的研究",
+    en: "Help them figure out how to transfer this method/idea to their own research",
+  },
+  purple: {
+    zh: "顺着他的疑问深挖，给支持或反驳的依据，不和稀泥",
+    en: "Dig into their doubt, give supporting or refuting evidence, don't sit on the fence",
+  },
+  gray: {
+    zh: "帮他判断这个说法可不可信、该怎么核实",
+    en: "Help them judge whether the claim is credible and how to verify it",
+  },
+};
+// 判断某 tag 是否仍是「内置默认标签」（label 没被用户改过 —— zh/en 任一版本都算）。
+function isDefaultTag(tag) {
+  const m = DEFAULT_TAG_LABELS[tag && tag.id];
+  return !!m && (tag.label === m.zh || tag.label === m.en);
+}
+// 显示用 label：内置默认标签按当前语言翻译；用户自定义标签原样返回。
+function displayTagLabel(tag) {
+  if (!tag) return "";
+  return isDefaultTag(tag) ? DEFAULT_TAG_LABELS[tag.id][LANG] : (tag.label || "");
+}
+// 默认主题名（app 自带内容）→ 按当前语言翻译；用户改过名则原样返回。
+const DEFAULT_TOPIC_NAMES = ["默认主题", "Default topic", "示例主题", "Sample topic"];
+function displayTopicName(topic) {
+  if (!topic) return "";
+  if (topic.id === DEFAULT_TOPIC_ID && DEFAULT_TOPIC_NAMES.includes(topic.name)) {
+    return t("defaultTopicName");
+  }
+  return topic.name || "";
+}
+// 给 LLM 的 aiHint：内置默认标签按当前语言；用户自定义 aiHint 原样。
+function displayTagAiHint(tag) {
+  if (!tag) return "";
+  if (isDefaultTag(tag) && DEFAULT_TAG_AIHINTS[tag.id]) {
+    return DEFAULT_TAG_AIHINTS[tag.id][LANG];
+  }
+  return (tag.aiHint || "");
+}
+
 // 构建 palette 注入字符串（追加到 system message 末尾，给 LLM 看 tag 规则）
 // 设计：每行一个 tag —— 有 aiHint 就 "标签：提示"，没有就只输出标签名。
 //       按 palette 数组原顺序 —— 这是 caching 前缀稳定的关键（同 palette 永远相同字节序列，
@@ -747,10 +1306,14 @@ const DEFAULT_TOPIC_ID = "default";
 function buildPaletteRules(palette) {
   if (!palette || palette.length === 0) return "";
   const lines = palette.map((p) => {
-    const hint = p.aiHint && p.aiHint.trim();
-    return hint ? `- ${p.label}：${hint}` : `- ${p.label}`;
+    const label = displayTagLabel(p) || p.label;
+    const hint = (displayTagAiHint(p) || "").trim();
+    return hint ? `- ${label}: ${hint}` : `- ${label}`;
   });
-  return `## 标签规则\n用户用颜色标签标记论文里的段落，按标签调整你的回应：\n${lines.join("\n")}`;
+  const heading = LANG === "en"
+    ? "## Tag rules\nThe user marks passages with colored tags. Adjust your response by tag:"
+    : "## 标签规则\n用户用颜色标签标记论文里的段落，按标签调整你的回应：";
+  return `${heading}\n${lines.join("\n")}`;
 }
 
 // ── IndexedDB 轻封装（无依赖） ──
@@ -988,7 +1551,7 @@ async function ensureDefaultTopic() {
     const now = new Date().toISOString();
     topic = {
       id: DEFAULT_TOPIC_ID,
-      name: "默认主题",
+      name: "示例主题",
       // 深拷贝默认 palette（避免后续编辑器 mutate 到模板）
       palette: DEFAULT_PALETTE.map((p) => ({ ...p })),
       pdfKeys: [],
@@ -1224,7 +1787,7 @@ const EXAMPLE_SEED =
     "pdfKey": "url:https://arxiv.org/abs/2412.13678",
     "topic": {
       "id": "default",
-      "name": "默认主题",
+      "name": "示例主题",
       "palette": [
         {
           "id": "red",
@@ -1599,6 +2162,7 @@ const EXAMPLE_SEED =
           {
             "role": "user",
             "content": "论文一句话定义：用 AI 自己分析海量对话，全程不让人读原始对话。这是 Clio 的核心卖点。",
+            "contentEn": "One-line definition: use AI itself to analyze massive volumes of conversations, with no human ever reading the raw conversations. This is Clio's core selling point.",
             "includedInNote": true
           }
         ],
@@ -1618,6 +2182,7 @@ const EXAMPLE_SEED =
           {
             "role": "user",
             "content": "可借鉴：把分析平台同时用作安全监控（发现协同滥用、监测 unknown unknowns）这个双重定位，值得迁移到我自己的系统评估里。",
+            "contentEn": "Reusable idea: positioning the analysis platform simultaneously as a safety monitor (detecting coordinated abuse, watching for unknown unknowns) — this dual role is worth transferring into my own system evaluation.",
             "includedInNote": true
           }
         ],
@@ -1637,11 +2202,13 @@ const EXAMPLE_SEED =
           {
             "role": "user",
             "content": "[CURRENT_PAGE: 1]\n这句里说日语对话讨论养老的比例偏高，这个发现是怎么得出来的？Clio 是怎么保证这种跨语言模式不是噪声的？",
+            "contentEn": "[CURRENT_PAGE: 1]\nThis sentence says Japanese conversations discuss elder care at higher-than-typical rates — how was that finding derived? How does Clio ensure such cross-lingual patterns aren't just noise?",
             "includedInNote": true
           },
           {
             "role": "assistant",
             "content": "这个发现来自 Clio 的多语言分析流程。具体来说，Clio 先对每段对话提取 facets，包括识别对话使用的语言（通过 Claude 3 Haiku 分类，再用 `langcodes` 等工具验证〔p.38〕），以及提取对话主题（比如 \"What task is the model being asked to perform?\" 这个 facet〔p.7〕）。然后通过语义聚类——先用 `all-mpnet-base-v2` 做 embedding，再用 k-means 聚类〔p.22–23〕——把日语对话中关于 \"elder care\" 的集群单独识别出来。\n\n**这种跨语言模式不是噪声，而是有双层校验支撑的：**\n\n1. **统计显著性检验**：Clio 会比较每个语言在某个集群中的占比 vs. 该语言在整体样本中的基数比例（base rate），计算\"相对于基数的倍数\"——Figure 7 里就是用的这个方法〔p.9〕。日语在 elder care 集群中的比例如果显著高于它在全部对话中的比例，才被视作有意义的差异。\n\n2. **多语言端到端验证**：附录 C 的合成数据实验表明，Clio 在 15 种语言上的主题重建准确率都在 **92% 以上**（日语 94.4%）〔p.29〕。这说明聚类和标签生成对日语这类非英语语料同样可靠，而不是因为 embedding 模型对日语有偏而导致误分类。\n\n此外，在隐私层（Min. accounts ≥ N）和聚类聚合阈值之后，还经过人工抽样审查（Appendix C.1），确认集群标题和内容一致——所以 \"elder care\" 集群不是零散的噪声形成的偶然模式〔p.26〕。",
+            "contentEn": "This finding comes from Clio's multilingual analysis pipeline. Specifically, Clio first extracts facets from each conversation, including identifying the conversation's language (classified by Claude 3 Haiku, then validated with tools like `langcodes` 〔p.38〕) and extracting conversation topics (e.g. the facet \"What task is the model being asked to perform?\" 〔p.7〕). It then uses semantic clustering — first embedding with `all-mpnet-base-v2`, then k-means clustering 〔p.22-23〕 — to isolate the \"elder care\" cluster among Japanese conversations.\n\n**This cross-lingual pattern is not noise; it is backed by two layers of validation:**\n\n1. **Statistical significance testing**: Clio compares each language's share within a cluster against that language's base rate in the overall sample, computing the \"multiple over base rate\" — this is the method used in Figure 7 〔p.9〕. Japanese is only treated as a meaningful difference if its share in the elder-care cluster is significantly above its share across all conversations.\n\n2. **End-to-end multilingual validation**: The synthetic-data experiments in Appendix C show Clio reconstructs topics with **over 92%** accuracy across 15 languages (94.4% for Japanese) 〔p.29〕. This indicates clustering and label generation are equally reliable for non-English corpora like Japanese, rather than misclassification from embedding bias.\n\nMoreover, after the privacy layer (Min. accounts ≥ N) and clustering aggregation thresholds, there is also manual sample review (Appendix C.1) confirming cluster titles match their contents — so the \"elder care\" cluster is not an incidental pattern formed by scattered noise 〔p.26〕.",
             "includedInNote": true
           }
         ],
@@ -1661,11 +2228,13 @@ const EXAMPLE_SEED =
           {
             "role": "user",
             "content": "[CURRENT_PAGE: 1]\n请给这篇论文一个 100 字以内的核心总结（What / Why / How / Result）。",
+            "contentEn": "[CURRENT_PAGE: 1]\nPlease give a core summary of this paper in under 100 words (What / Why / How / Result). Respond in English.",
             "includedInNote": true
           },
           {
             "role": "assistant",
             "content": "这篇论文介绍 **Clio**，一个利用 AI 模型本身对百万级用户对话进行隐私保护的聚合分析平台。**目的**是解决理解真实世界 AI 使用情况时面临的隐私、伦理和规模难题。**方法**是通过对话摘要、语义聚类和层级可视化来提取洞察。**结果**揭示了 Claude.ai 上编码、写作和研究的常见用例，并成功发现了滥用模式，提升了安全监控能力。",
+            "contentEn": "This paper introduces **Clio**, a privacy-preserving platform that uses AI models themselves to perform aggregated analysis over millions of user conversations. **Why**: to solve the privacy, ethical, and scale challenges of understanding real-world AI usage. **How**: by extracting insights through conversation summarization, semantic clustering, and hierarchical visualization. **Result**: it reveals common use cases on Claude.ai such as coding, writing, and research, and successfully surfaces abuse patterns, improving safety monitoring.",
             "includedInNote": true
           }
         ],
@@ -2232,30 +2801,30 @@ function annPageLabel(ann) {
 // emoji / label / color 优先取自当前主题 palette，回退全局 COLOR_MAP（hex 用 PALETTE_HEX）。
 function commentTag(comment) {
   if (comment.isMain) {
-    return { emoji: "📄", label: "全文", page: "", hex: null, isMain: true };
+    return { emoji: "📄", label: t("cmtFulltextLabel"), page: "", hex: null, isMain: true };
   }
   const ann = comment.annotation;
   const palette = state.topics[state.currentTopicId]?.palette || [];
-  const tag = palette.find((t) => t.id === ann.color);
+  const tag = palette.find((p) => p.id === ann.color);
   const emoji = tag?.emoji || COLOR_MAP[ann.color]?.emoji || "●";
-  const label = tag?.label || COLOR_MAP[ann.color]?.label || "";
+  const label = (tag ? displayTagLabel(tag) : "") || COLOR_MAP[ann.color]?.label || "";
   const hex = tag?.color || PALETTE_HEX[ann.color] || null;
   return { emoji, label, page: annPageLabel(ann), hex, isMain: false };
 }
 
 // comment 原文（单行连缀、trim）
 function commentQuoteText(comment) {
-  if (comment.isMain) return "全文导读";
+  if (comment.isMain) return t("cmtFulltextQuote");
   const txt = (comment.annotation.text || "").replace(/\s+/g, " ").trim();
-  return txt || "(无原文)";
+  return txt || t("cmtNoQuote");
 }
 
 function updateCommentSummary() {
   if (!els.cmtSummary) return;
   const n = state.annotations.length; // main 之外的 comment 数（含纯标记高亮）
   els.cmtSummary.textContent = n === 0
-    ? "还没有 comment —— 划线选色即可建一条"
-    : `${n} 条 comment`;
+    ? t("cmtSummaryEmpty")
+    : t("cmtSummaryCount", n);
 }
 
 // 主渲染入口：清空 #commentList 重建所有卡片
@@ -2297,7 +2866,7 @@ function buildCommentCard(comment) {
   dot.setAttribute("aria-hidden", "true");
   const tagLabel = document.createElement("span");
   tagLabel.className = "cc-tag-label";
-  tagLabel.textContent = tagInfo.label || "标签";
+  tagLabel.textContent = tagInfo.label || t("cmtTagFallback");
   tag.append(dot, tagLabel);
   if (tagInfo.page) {
     const tagPage = document.createElement("span");
@@ -2318,8 +2887,8 @@ function buildCommentCard(comment) {
     del.type = "button";
     del.className = "cc-del";
     del.dataset.action = "delete-comment";
-    del.title = "删除这条高亮 + 讨论";
-    del.setAttribute("aria-label", "删除 comment");
+    del.title = t("cmtDelTitle");
+    del.setAttribute("aria-label", t("cmtDelAria"));
     del.textContent = "🗑";
     head.appendChild(del);
   }
@@ -2366,12 +2935,12 @@ function renderCommentMessages(comment) {
     let prev = -1, toggleInserted = false;
     for (const i of visibleIdx) {
       if (!toggleInserted && i - prev > 1) {
-        const t = document.createElement("button");
-        t.type = "button";
-        t.className = "cc-fold-toggle";
-        t.dataset.action = "unfold";
-        t.textContent = `··· 展开折叠的 ${hiddenCount} 条 ···`;
-        wrap.appendChild(t);
+        const foldBtn = document.createElement("button");
+        foldBtn.type = "button";
+        foldBtn.className = "cc-fold-toggle";
+        foldBtn.dataset.action = "unfold";
+        foldBtn.textContent = t("cmtShowHidden", hiddenCount);
+        wrap.appendChild(foldBtn);
         toggleInserted = true;
       }
       wrap.appendChild(buildMessageEl(msgs[i], i));
@@ -2409,11 +2978,11 @@ function buildMessageEl(m, index) {
 
   const roleEl = document.createElement("div");
   roleEl.className = "role";
-  roleEl.textContent = m.role === "user" ? "你" : "Agent";
+  roleEl.textContent = m.role === "user" ? t("roleUser") : t("roleAgent");
 
   const contentEl = document.createElement("div");
   contentEl.className = "content";
-  const text = m.role === "user" ? _stripPageTag(m.content) : (m.content || "");
+  const text = m.role === "user" ? _stripPageTag(msgContent(m)) : msgContent(m);
   if (m.role === "assistant") renderAssistant(contentEl, text);
   else contentEl.textContent = text;
 
@@ -2426,7 +2995,7 @@ function buildMessageEl(m, index) {
   cb.dataset.action = "toggle-note";
   cb.dataset.msgIndex = String(index);
   const noteTxt = document.createElement("span");
-  noteTxt.textContent = "收入笔记";
+  noteTxt.textContent = t("noteInclude");
   note.append(cb, noteTxt);
 
   el.append(roleEl, contentEl, note);
@@ -2440,15 +3009,15 @@ function buildCommentInput(comment) {
   form.dataset.commentId = comment.id;
   const ta = document.createElement("textarea");
   ta.rows = 1;
-  ta.placeholder = "写批注…  输入 @ 可召唤 AI";
+  ta.placeholder = t("cmtComposePlaceholder");
   const btn = document.createElement("button");
   btn.type = "submit";
   const streamingThis = state.streaming && state.streamingCommentId === comment.id;
   if (streamingThis) {
-    btn.textContent = "停止";
+    btn.textContent = t("cmtComposeStop");
     btn.classList.add("stopping");
   } else {
-    btn.textContent = "发送";
+    btn.textContent = t("cmtComposeSend");
     if (state.streaming) { ta.disabled = true; btn.disabled = true; }
   }
   form.append(ta, btn);
@@ -2567,10 +3136,11 @@ function toggleMsgIncluded(commentId, msgIndex) {
 //          大前缀字节稳定 → comment 之间共享缓存命中（不掺时间戳/UUID）。
 
 // @AI 默认问题（用户只打 @AI 不带问题时）
+// 英文模式下显式带 "Respond in English."（见 I18N.en.defaultQMain），让 AI 也英文回复。
 function defaultQuestion(commentId) {
   return commentId === "main"
-    ? `请给这篇论文一个 100 字以内的${PRIME_KEYWORD}（What / Why / How / Result）。`
-    : "请帮我解读这段划线原文。";
+    ? t("defaultQMain")
+    : t("defaultQHighlight");
 }
 
 // comment 输入路由：含 @AI → 召唤 AI；否则 → 纯批注。compose 框与卡片输入共用。
@@ -2631,11 +3201,16 @@ async function sendToComment(commentId, question, from) {
   const paletteRules = buildPaletteRules(state.topics[state.currentTopicId]?.palette);
   const sys = [];
   if (paletteRules) sys.push({ role: "system", content: paletteRules });
+  // i18n：英文模式下显式要求 AI 用英文回复（system_prompt.md 默认中文回复；
+  // 加这条 system 指令让自动总结 / 用户 @AI 在英文界面下也出英文，不碰 server.py）。
+  if (LANG === "en") {
+    sys.push({ role: "system", content: "Respond in English." });
+  }
   const ann = state.annotations.find((a) => a.id === commentId);
   if (ann) {
     sys.push({
       role: "system",
-      content: `用户正在讨论第 ${annPageLabel(ann)} 的一段划线原文：\n"""${ann.text}"""\n回答请围绕这段原文。`,
+      content: t("annContextNote", annPageLabel(ann), ann.text),
     });
   }
   const messagesForLLM = [...sys, ...thread.messages];
@@ -2685,8 +3260,8 @@ async function sendToComment(commentId, question, from) {
         }
       }
     }
-    if (!sawAnySSE) throw new Error(extractErrorMessage(rawAll) || "上游返回的不是流式响应。");
-    if (!fullText.trim()) throw new Error("上游返回空内容（可能被安全过滤或额度耗尽）。");
+    if (!sawAnySSE) throw new Error(extractErrorMessage(rawAll) || t("errNotStream"));
+    if (!fullText.trim()) throw new Error(t("errEmptyContent"));
     thread.messages.push({ role: "assistant", content: fullText, includedInNote: true });
     persistThread(thread);
     _replyOk = true;
@@ -2694,7 +3269,7 @@ async function sendToComment(commentId, question, from) {
     if (e.name === "AbortError") {
       // 中止：有半成品就留下（标注已中止），没有就只留用户消息
       if (fullText) {
-        thread.messages.push({ role: "assistant", content: fullText + "\n\n_（已中止）_", includedInNote: true });
+        thread.messages.push({ role: "assistant", content: fullText + "\n\n" + t("aborted"), includedInNote: true });
         persistThread(thread);
       }
     } else {
@@ -2703,7 +3278,7 @@ async function sendToComment(commentId, question, from) {
       const looksLikeHtml = /<[a-zA-Z!\/]/.test(rawMsg);
       if (rawMsg.length > 200 || looksLikeHtml) {
         console.warn("[sendToComment] 上游原始错误内容:", rawMsg);
-        state.streamError = { commentId, text: "⚠ 上游返回格式异常（详情见 console）" };
+        state.streamError = { commentId, text: t("errBadFormat") };
       } else {
         state.streamError = { commentId, text: `⚠ ${rawMsg}` };
       }
@@ -2752,8 +3327,8 @@ function extractErrorMessage(raw) {
 // v3-fixup-2: 把 primeSummary 文案里的检测词抽成常量。
 // 改 primeSummary 文案时必须确保 PRIME_KEYWORD 仍然出现在模板里，否则 maybePrimeSummary 检测会失效，
 // 导致每次 reload 都重发一次浪费 token。
-/* PRIME_KEYWORD 必须出现在 primeSummary 模板里，改文案时同步 */
-const PRIME_KEYWORD = "核心总结";
+// i18n：检测词需同时识别中/英两版（用户切语言后仍要识别上次 prime 过的 main thread，避免重发）。
+const PRIME_KEYWORDS = [I18N.zh.primeKeyword, I18N.en.primeKeyword];
 
 async function primeSummary() {
   // 自动总结进「全文 comment」(main)。文案含 PRIME_KEYWORD（见 defaultQuestion），供 maybePrimeSummary 检测
@@ -2771,7 +3346,8 @@ async function maybePrimeSummary() {
     mainThread &&
     Array.isArray(mainThread.messages) &&
     mainThread.messages.some(
-      (m) => m && m.role === "user" && typeof m.content === "string" && m.content.includes(PRIME_KEYWORD)
+      (m) => m && m.role === "user" && typeof m.content === "string" &&
+        PRIME_KEYWORDS.some((kw) => m.content.includes(kw))
     );
   if (alreadyPrimed) {
     console.debug("[primeSummary] already done in prior session, skipping");
@@ -2822,7 +3398,7 @@ function postProcessCitations(html) {
   let out = html;
   for (const re of CITE_REGEXES) {
     out = out.replace(re, (_match, n) => {
-      return `<a class="cite-link" data-page="${n}" title="跳到第 ${n} 页">〔p.${n}〕</a>`;
+      return `<a class="cite-link" data-page="${n}" title="${t("citeJumpTitle", n)}">〔p.${n}〕</a>`;
     });
   }
   return out;
@@ -2864,10 +3440,10 @@ function renderHomeRecent() {
   box.replaceChildren();
   const items = [];
   for (const tid of Object.keys(state.topics)) {
-    const t = state.topics[tid];
-    if (!t) continue;
-    for (const k of (t.pdfKeys || [])) {
-      if (k.startsWith("url:")) items.push({ pdfKey: k, topicId: tid, topicName: t.name });
+    const topic = state.topics[tid];
+    if (!topic) continue;
+    for (const k of (topic.pdfKeys || [])) {
+      if (k.startsWith("url:")) items.push({ pdfKey: k, topicId: tid, topicName: displayTopicName(topic) });
     }
   }
   if (items.length === 0) return;   // 没读过 → 不渲染（首页保持干净）
@@ -2875,7 +3451,7 @@ function renderHomeRecent() {
   const recent = items.slice(0, 8);
   const head = document.createElement("div");
   head.className = "home-recent-head";
-  head.textContent = "最近在读";
+  head.textContent = t("recentHead");
   box.appendChild(head);
   const list = document.createElement("div");
   list.className = "home-recent-list";
@@ -2889,12 +3465,12 @@ function renderHomeRecent() {
     const name = document.createElement("span");
     name.className = "hr-name";
     // 示例条目用特殊标题，和真实论文区分；并加一个浅色「示例」小标签
-    name.textContent = isExample ? EXAMPLE_RECENT_TITLE : deriveTitleFromPdfKey(it.pdfKey);
+    name.textContent = isExample ? t("exampleRecentTitle") : deriveTitleFromPdfKey(it.pdfKey);
     if (isExample) {
       card.classList.add("home-recent-item-example");
       const badge = document.createElement("span");
       badge.className = "hr-badge";
-      badge.textContent = "示例";
+      badge.textContent = t("exampleBadge");
       name.appendChild(badge);
     }
     const topic = document.createElement("span");
@@ -2993,7 +3569,7 @@ function resetReaderState() {
   // v5：收起搜索结果下拉（避免跨 PDF 残留旧结果）
   hideFindDropdown();
   els.pageInfo.textContent = "- / -";
-  if (els.cmtSummary) els.cmtSummary.textContent = "准备中…";
+  if (els.cmtSummary) els.cmtSummary.textContent = t("cmtSummaryPreparing");
   els.pdfTitle.textContent = "";
   els.readerTopicHint.textContent = "";
 }
@@ -3042,20 +3618,20 @@ const MIN_PALETTE_ROWS = 1;        // 最少 1 行（删到 0 行就丢失主题
 // ── 工具：相对时间（粗糙够用）──
 function formatRelativeTime(iso) {
   if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (!t) return "";
-  const diff = Date.now() - t;
+  const ts = new Date(iso).getTime();
+  if (!ts) return "";
+  const diff = Date.now() - ts;
   const min = 60 * 1000, hour = 60 * min, day = 24 * hour;
-  if (diff < min) return "刚刚";
-  if (diff < hour) return `${Math.floor(diff / min)} 分钟前`;
-  if (diff < day) return `${Math.floor(diff / hour)} 小时前`;
-  if (diff < 30 * day) return `${Math.floor(diff / day)} 天前`;
+  if (diff < min) return t("timeJustNow");
+  if (diff < hour) return t("timeMinAgo", Math.floor(diff / min));
+  if (diff < day) return t("timeHourAgo", Math.floor(diff / hour));
+  if (diff < 30 * day) return t("timeDayAgo", Math.floor(diff / day));
   try { return new Date(iso).toISOString().slice(0, 10); } catch { return ""; }
 }
 
 // 从 pdfKey 反推可读标题（file:foo.pdf:123 / url:https://... → 截尾）
 function deriveTitleFromPdfKey(pdfKey, fallback = "") {
-  if (!pdfKey) return fallback || "(未命名)";
+  if (!pdfKey) return fallback || t("unnamedPdf");
   if (pdfKey.startsWith("file:")) {
     // file:NAME:SIZE → 取中间的 NAME
     const rest = pdfKey.slice(5);
@@ -3096,7 +3672,7 @@ function buildTopicCard(topic) {
   // 名称
   const name = document.createElement("div");
   name.className = "tc-name";
-  name.textContent = topic.name;
+  name.textContent = displayTopicName(topic);
 
   // palette 色块预览
   const pal = document.createElement("div");
@@ -3105,7 +3681,7 @@ function buildTopicCard(topic) {
     const sw = document.createElement("span");
     sw.className = "tc-swatch";
     sw.style.background = p.color;
-    sw.title = p.label;
+    sw.title = displayTagLabel(p);
     pal.appendChild(sw);
   }
 
@@ -3114,7 +3690,7 @@ function buildTopicCard(topic) {
   meta.className = "tc-meta";
   const pdfCount = (topic.pdfKeys || []).length;
   const m1 = document.createElement("span");
-  m1.textContent = `${pdfCount} 篇`;
+  m1.textContent = t("tpPdfCount", pdfCount);
   const m2 = document.createElement("span");
   m2.textContent = formatRelativeTime(topic.createdAt);
   meta.appendChild(m1);
@@ -3126,7 +3702,7 @@ function buildTopicCard(topic) {
     menuBtn.type = "button";
     menuBtn.className = "tc-menu-btn";
     menuBtn.textContent = "⋯";
-    menuBtn.setAttribute("aria-label", "更多操作");
+    menuBtn.setAttribute("aria-label", t("tpMoreActions"));
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       showTopicCardMenu(topic.id, menuBtn);
@@ -3167,18 +3743,18 @@ function hideTopicCardMenu() {
 
 // ── 主题页 ──
 function renderTopicPage(topic) {
-  els.tpName.textContent = topic.name;
+  els.tpName.textContent = displayTopicName(topic);
   // palette 行（只读小标签）
   els.tpPaletteRow.replaceChildren();
   for (const p of (topic.palette || [])) {
     const tag = document.createElement("span");
     tag.className = "tp-tag";
-    tag.title = "主题创建后色板不可修改";
+    tag.title = t("tpPaletteTitle");
     const sw = document.createElement("span");
     sw.className = "tp-tag-swatch";
     sw.style.background = p.color || "#b8b8b8";
     const lb = document.createElement("span");
-    lb.textContent = p.label;
+    lb.textContent = displayTagLabel(p);
     tag.append(sw, lb);
     els.tpPaletteRow.appendChild(tag);
   }
@@ -3205,7 +3781,7 @@ function renderTpPdfList(topic) {
   if (pdfKeys.length === 0) {
     const empty = document.createElement("div");
     empty.className = "tp-pdf-empty";
-    empty.textContent = "还没有论文。粘贴一个链接或选本地 PDF 开始读。";
+    empty.textContent = t("tpEmptyPdf");
     els.tpPdfList.appendChild(empty);
     return;
   }
@@ -3235,8 +3811,8 @@ function renderTpPdfList(topic) {
     removeBtn.type = "button";
     removeBtn.className = "tp-pdf-remove";
     removeBtn.textContent = "×";
-    removeBtn.title = "从本主题移除（不删 annotation 数据）";
-    removeBtn.setAttribute("aria-label", "移除");
+    removeBtn.title = t("tpRemoveTitle");
+    removeBtn.setAttribute("aria-label", t("tpRemoveAria"));
     removeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       removePdfFromTopic(topic.id, pdfKey);
@@ -3271,10 +3847,10 @@ function openPdfFromTopic(topicId, pdfKey) {
   } else if (pdfKey.startsWith("file:")) {
     // 本地文件无法存进 IDB（File 对象不可序列化 + 隐私）
     // → 用户必须重新选；这里弹个友好提示
-    setTpStatus("本地文件无法保存，请重新选择 PDF 文件。", true);
+    setTpStatus(t("localFileError"), true);
     els.tpFileInput.click();
   } else {
-    setTpStatus(`未知 PDF key 格式: ${pdfKey}`, true);
+    setTpStatus(t("unknownPdfKey", pdfKey), true);
   }
 }
 
@@ -3288,10 +3864,10 @@ function updateReaderTopicHint() {
     els.readerTopicHint.removeAttribute("data-editable");
     return;
   }
-  els.readerTopicHint.textContent = topic.name;
+  els.readerTopicHint.textContent = displayTopicName(topic);
   // 任何主题（含默认）点击都可 inline 改名
   els.readerTopicHint.setAttribute("data-editable", "1");
-  els.readerTopicHint.title = `点击重命名（当前：${topic.name}）`;
+  els.readerTopicHint.title = t("readerTopicHintTitle", displayTopicName(topic));
 }
 
 // v3-polish #5：reader 顶栏主题名 inline 重命名
@@ -3308,7 +3884,7 @@ function startEditReaderTopicHint() {
   input.className = "reader-topic-hint-input";
   input.value = oldName;
   input.maxLength = 30;
-  input.setAttribute("aria-label", "重命名主题");
+  input.setAttribute("aria-label", t("tpRenameAria"));
   // 用 input 替换 hint span 的 textContent —— 但保留 dot ::before
   els.readerTopicHint.textContent = "";
   els.readerTopicHint.appendChild(input);
@@ -3363,7 +3939,7 @@ function startEditTpName(topicId) {
   input.className = "tp-name-input";
   input.value = oldName;
   input.maxLength = 30;
-  input.setAttribute("aria-label", "重命名主题");
+  input.setAttribute("aria-label", t("tpRenameAria"));
   els.tpName.textContent = "";
   els.tpName.appendChild(input);
   input.focus();
@@ -3376,7 +3952,7 @@ function startEditTpName(topicId) {
     _tpNameEditing = false;
     const nextName = input.value.trim().slice(0, 30);
     if (!save || !nextName || nextName === oldName) {
-      els.tpName.textContent = topic.name;
+      els.tpName.textContent = displayTopicName(topic);
       return;
     }
     try {
@@ -3384,7 +3960,7 @@ function startEditTpName(topicId) {
     } catch (e) {
       console.warn("[renameTopic]", e);
     }
-    els.tpName.textContent = topic.name;
+    els.tpName.textContent = displayTopicName(topic);
   };
 
   input.addEventListener("keydown", (e) => {
@@ -3425,7 +4001,7 @@ async function createTopic({ name, palette, id }) {
   const now = new Date().toISOString();
   const topic = {
     id: tid,
-    name: (name || "").trim() || "未命名主题",
+    name: (name || "").trim() || t("unnamedTopic"),
     // 深拷贝 palette（防 modal 编辑器后续 mutate）
     palette: (palette || []).map((p) => ({ ...p })),
     pdfKeys: [],
@@ -3548,14 +4124,22 @@ function _stripPageTag(s) {
   return s.replace(/^\[CURRENT_PAGE:\s*\d+\]\n/, "");
 }
 
+// i18n：取消息的展示文案。示例种子消息带 contentEn（英文版）—— 英文模式优先用它。
+// 用户真实消息没有 contentEn，回退到 content（保持用户输入原文）。
+function msgContent(m) {
+  if (!m) return "";
+  if (LANG === "en" && typeof m.contentEn === "string" && m.contentEn) return m.contentEn;
+  return m.content || "";
+}
+
 // 文件名安全化：替换 windows / unix 不合法字符为 -
 // 主题名含 "测试/X" → "测试-X"
 function _safeFileName(name) {
-  return (name || "未命名主题")
+  return (name || t("unnamedTopic"))
     .replace(/[\\/:*?"<>|]/g, "-")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 60) || "未命名主题";
+    .slice(0, 60) || t("unnamedTopic");
 }
 
 // yyyyMMdd-HHmm（按本地时区）
@@ -3573,10 +4157,10 @@ function _exportMsgLines(messages) {
   const out = [];
   for (const m of (messages || [])) {
     if (!isMsgIncluded(m)) continue;
-    const role = m.role === "user" ? "**你**" : "**Agent**";
-    const content = (m.role === "user" ? _stripPageTag(m.content) : (m.content || "")).trim();
+    const role = m.role === "user" ? t("mdRoleUser") : t("mdRoleAgent");
+    const content = (m.role === "user" ? _stripPageTag(msgContent(m)) : msgContent(m)).trim();
     if (!content) continue;
-    out.push(`${role}：${content}`, "");
+    out.push(`${role}${LANG === "en" ? ": " : "："}${content}`, "");
   }
   return out;
 }
@@ -3602,7 +4186,7 @@ function buildPdfNoteSection(anns, getThread, palette, groupMode = "tag") {
   const lines = [];
   // 1. 全文导读（main comment）—— 有收入笔记的消息才出小节
   const mainMsgs = _exportMsgLines((getThread("main") || {}).messages);
-  if (mainMsgs.length) lines.push("### 📄 全文导读", "", ...mainMsgs);
+  if (mainMsgs.length) lines.push(t("mdFulltext"), "", ...mainMsgs);
 
   // 高亮 comment：过滤掉整条取消（ann.includedInNote === false）的
   const included = (anns || []).filter(isAnnIncluded);
@@ -3612,7 +4196,7 @@ function buildPdfNoteSection(anns, getThread, palette, groupMode = "tag") {
     const sorted = [...included].sort(
       (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
     );
-    if (sorted.length) lines.push("### 划线笔记", "");
+    if (sorted.length) lines.push(t("mdHighlightNotes"), "");
     for (const ann of sorted) {
       lines.push(..._exportCommentLines(ann, getThread));
     }
@@ -3626,7 +4210,7 @@ function buildPdfNoteSection(anns, getThread, palette, groupMode = "tag") {
     }
     for (const g of [...groups, other]) {
       if (g.anns.length === 0) continue;
-      lines.push(`### ${g.tag ? `${g.tag.emoji} ${g.tag.label}` : "其它"}`, "");
+      lines.push(g.tag ? `### ${g.tag.emoji} ${displayTagLabel(g.tag)}` : t("mdOther"), "");
       const sorted = [...g.anns].sort(
         (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
       );
@@ -3635,16 +4219,16 @@ function buildPdfNoteSection(anns, getThread, palette, groupMode = "tag") {
       }
     }
   }
-  if (lines.length === 0) lines.push("_（暂无笔记 —— 划线标记或 @AI 讨论后再导出）_", "");
+  if (lines.length === 0) lines.push(t("mdEmptyNote"), "");
   return lines;
 }
 
 function _exportHeader(title, sub, palette) {
   const lines = [`# ${title}`, ""];
   const now = new Date().toISOString().slice(0, 16).replace("T", " ");
-  lines.push(`> 导出时间 ${now} · ${sub}`, "");
+  lines.push(t("mdExportTime", now, sub), "");
   if (palette && palette.length) {
-    lines.push(`> 标签：${palette.map((p) => `${p.emoji} ${p.label}`).join(" / ")}`, "");
+    lines.push(t("mdTagsLine", palette.map((p) => `${p.emoji} ${displayTagLabel(p)}`).join(" / ")), "");
   }
   lines.push("---", "");
   return lines;
@@ -3654,13 +4238,13 @@ function _exportHeader(title, sub, palette) {
 //   groupMode: "tag" / "reading"
 async function generateMarkdownExport(topicId, groupMode = "tag") {
   const topic = state.topics[topicId];
-  if (!topic) throw new Error("主题不存在");
+  if (!topic) throw new Error(t("errTopicNotExist"));
   const pdfKeys = topic.pdfKeys || [];
   const palette = topic.palette || [];
-  const subGroup = groupMode === "reading" ? "按阅读顺序" : "按标签归类";
-  const lines = _exportHeader(`主题笔记：${topic.name}`, `收入笔记的内容，${subGroup}`, palette);
+  const subGroup = groupMode === "reading" ? t("mdGroupReading") : t("mdGroupTag");
+  const lines = _exportHeader(t("mdTopicNoteTitle", displayTopicName(topic)), t("mdSubGroupBody", subGroup), palette);
   if (pdfKeys.length === 0) {
-    lines.push("_（主题里还没有论文）_");
+    lines.push(t("mdTopicNoPdf"));
     return lines.join("\n");
   }
   for (const pdfKey of pdfKeys) {
@@ -3677,7 +4261,7 @@ async function generateMarkdownExport(topicId, groupMode = "tag") {
         anns = (await loadAnnotations(pdfKey) || []).filter((a) => !a.topicId || a.topicId === topicId);
       } catch (e) {
         console.warn("[generateMarkdownExport] loadAnnotations", pdfKey, e);
-        lines.push("_（annotation 数据读取失败）_", "");
+        lines.push(t("mdAnnReadFailed"), "");
       }
       try {
         threadRecs = (await loadThreadsByPdfKey(pdfKey) || []).filter((t) => !t.topicId || t.topicId === topicId);
@@ -3697,10 +4281,10 @@ async function generateMarkdownExport(topicId, groupMode = "tag") {
 function generateCurrentPdfMarkdown(groupMode = "tag") {
   const topic = state.topics[state.currentTopicId];
   const palette = topic ? topic.palette || [] : [];
-  const title = state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || "笔记";
-  const subGroup = groupMode === "reading" ? "按阅读顺序" : "按标签归类";
-  const sub = `${topic ? `主题 ${topic.name} · ` : ""}收入笔记的内容，${subGroup}`;
-  const lines = _exportHeader(`笔记：${title}`, sub, palette);
+  const title = state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || t("exportNoteFallback");
+  const subGroup = groupMode === "reading" ? t("mdGroupReading") : t("mdGroupTag");
+  const sub = `${topic ? t("mdSubTopicPrefix", displayTopicName(topic)) : ""}${t("mdSubGroupBody", subGroup)}`;
+  const lines = _exportHeader(t("mdNoteTitle", title), sub, palette);
   lines.push(...buildPdfNoteSection(state.annotations, (id) => state.threads[id], palette, groupMode));
   return lines.join("\n");
 }
@@ -3805,7 +4389,7 @@ async function _collectExportDocs() {
     if (!exportState.hasCurrent) return docs;
     docs.push({
       pdfKey: state.pdfKey,
-      title: state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || "笔记",
+      title: state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || t("exportNoteFallback"),
       anns: state.annotations || [],
       getThread: (id) => state.threads[id],
       isCurrent: true,
@@ -3870,21 +4454,21 @@ async function refreshExportPreview() {
     console.error("[refreshExportPreview]", e);
     const err = document.createElement("p");
     err.className = "export-empty";
-    err.textContent = "预览加载失败";
+    err.textContent = t("exportPreviewFailed");
     box.appendChild(err);
     return;
   }
   if (docs.length === 0) {
     const empty = document.createElement("p");
     empty.className = "export-empty";
-    empty.textContent = "没有可导出的内容";
+    empty.textContent = t("exportNothing");
     box.appendChild(empty);
     return;
   }
   for (const doc of docs) {
     const titleEl = document.createElement("div");
     titleEl.className = "export-doc-title";
-    titleEl.textContent = `# 笔记：${doc.title}`;
+    titleEl.textContent = t("mdExportTitlePrefix", doc.title);
     box.appendChild(titleEl);
     box.appendChild(_renderExportDocTree(doc, palette));
   }
@@ -3905,10 +4489,10 @@ function _exportMsgRow(doc, thread, m, msgIndex) {
   });
   const role = document.createElement("span");
   role.className = "export-msg-role";
-  role.textContent = m.role === "user" ? "你：" : "Agent：";
+  role.textContent = m.role === "user" ? t("roleUserColon") : t("roleAgentColon");
   const txt = document.createElement("span");
   txt.className = "export-msg-text";
-  txt.textContent = (m.role === "user" ? _stripPageTag(m.content) : (m.content || "")).trim();
+  txt.textContent = (m.role === "user" ? _stripPageTag(msgContent(m)) : msgContent(m)).trim();
   label.append(cb, role, txt);
   row.appendChild(label);
   return row;
@@ -3956,7 +4540,7 @@ function _exportCommentBlock(doc, ann, palette, showInlineTag) {
   const msgs = (thread && thread.messages) || [];
   msgs.forEach((m, i) => {
     if (off) return;  // 整条取消 → 不展开消息（取消即整组灰掉）
-    const content = (m.role === "user" ? _stripPageTag(m.content) : (m.content || "")).trim();
+    const content = (m.role === "user" ? _stripPageTag(msgContent(m)) : msgContent(m)).trim();
     if (!content) return;
     wrap.appendChild(_exportMsgRow(doc, thread, m, i));
   });
@@ -3968,7 +4552,7 @@ function _exportMainBlock(doc) {
   const thread = doc.getThread("main");
   const msgs = (thread && thread.messages) || [];
   const real = msgs.filter((m) => {
-    const c = (m.role === "user" ? _stripPageTag(m.content) : (m.content || "")).trim();
+    const c = (m.role === "user" ? _stripPageTag(msgContent(m)) : msgContent(m)).trim();
     return !!c;
   });
   if (real.length === 0) return null;
@@ -3988,7 +4572,7 @@ function _exportMainBlock(doc) {
     refreshExportPreview();
   });
   const name = document.createElement("span");
-  name.textContent = "📄 全文导读";
+  name.textContent = t("exportFulltextGroup");
   label.append(cb, name);
   headRow.appendChild(label);
   group.appendChild(headRow);
@@ -4059,7 +4643,7 @@ function _renderExportDocTree(doc, palette) {
         label.append(cb, sw, name);
       } else {
         const name = document.createElement("span");
-        name.textContent = "其它";
+        name.textContent = t("exportOtherGroup");
         label.append(cb, name);
       }
       headRow.appendChild(label);
@@ -4068,7 +4652,7 @@ function _renderExportDocTree(doc, palette) {
       toggle.type = "button";
       toggle.className = "export-group-toggle";
       const groupAllOn = sorted.every((a) => isAnnIncluded(a));
-      toggle.textContent = groupAllOn ? "全部取消" : "全选";
+      toggle.textContent = groupAllOn ? t("exportDeselectAll") : t("exportSelectAll");
       toggle.addEventListener("click", () => {
         const next = !groupAllOn;
         for (const a of sorted) a.includedInNote = next;
@@ -4087,7 +4671,7 @@ function _renderExportDocTree(doc, palette) {
   if (!any) {
     const empty = document.createElement("p");
     empty.className = "export-empty";
-    empty.textContent = "（这一篇暂无笔记）";
+    empty.textContent = t("exportEmptyPdf");
     frag.appendChild(empty);
   }
   return frag;
@@ -4099,7 +4683,7 @@ async function downloadFromExportPage() {
     if (exportState.scope === "current") {
       if (!state.pdf) return;
       const md = generateCurrentPdfMarkdown(exportState.group);
-      const base = _safeFileName(state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || "笔记");
+      const base = _safeFileName(state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || t("exportNoteFallback"));
       _downloadBlob(md, `${base}-${_formatStamp(new Date())}.md`);
     } else {
       const topic = state.topics[exportState.topicId];
@@ -4131,7 +4715,14 @@ function openNewTopicModal() {
   ntmDraft.step = 1;
   ntmDraft.name = "";
   // 用 DEFAULT_PALETTE 深拷贝（包含 emoji，但用户不能改 emoji）
-  ntmDraft.paletteDraft = DEFAULT_PALETTE.map((p) => ({ ...p }));
+  // i18n：默认 label / aiHint 按当前语言写入草稿（用户随后可改 → 变成用户数据）
+  ntmDraft.paletteDraft = DEFAULT_PALETTE.map((p) => ({
+    ...p,
+    label: DEFAULT_TAG_LABELS[p.id] ? DEFAULT_TAG_LABELS[p.id][LANG] : p.label,
+    ...(p.aiHint != null && DEFAULT_TAG_AIHINTS[p.id]
+      ? { aiHint: DEFAULT_TAG_AIHINTS[p.id][LANG] }
+      : {}),
+  }));
   els.ntmNameInput.value = "";
   els.newTopicModal.hidden = false;
   ntmRenderStep();
@@ -4151,7 +4742,7 @@ function ntmRenderStep() {
   els.ntmStep1.classList.toggle("active", ntmDraft.step === 1);
   els.ntmStep2.classList.toggle("active", ntmDraft.step === 2);
   els.ntmStep3.classList.toggle("active", ntmDraft.step === 3);
-  els.ntmStepIndicator.textContent = `第 ${ntmDraft.step} / 3 步`;
+  els.ntmStepIndicator.textContent = t("ntmStepIndicator", ntmDraft.step);
 
   // 按钮显示
   els.ntmPrev.hidden = ntmDraft.step === 1;
@@ -4188,12 +4779,12 @@ function ntmRenderPaletteEditor() {
     const em = document.createElement("span");
     em.className = "ntm-swatch";
     em.style.background = p.color || "#b8b8b8";
-    em.title = "标签颜色（创建后冻结）";
+    em.title = t("ntmTagColorTitle");
 
     const lb = document.createElement("input");
     lb.type = "text";
     lb.maxLength = 20;
-    lb.placeholder = "标签 ≤ 20 字";
+    lb.placeholder = t("ntmTagPlaceholder");
     lb.value = p.label;
     lb.addEventListener("input", () => {
       p.label = lb.value;
@@ -4208,7 +4799,7 @@ function ntmRenderPaletteEditor() {
     del.type = "button";
     del.className = "ntm-del";
     del.textContent = "🗑";
-    del.title = "删除此行";
+    del.title = t("ntmDelRowTitle");
     del.disabled = ntmDraft.paletteDraft.length <= MIN_PALETTE_ROWS;
     del.addEventListener("click", () => {
       ntmDraft.paletteDraft.splice(idx, 1);
@@ -4244,7 +4835,7 @@ function ntmAddPaletteRow() {
   ntmDraft.paletteDraft.push({
     id: newId,
     emoji: chosenEmoji,
-    label: "新标签",
+    label: t("ntmNewTagLabel"),
     color: nextColor,
   });
   ntmRenderPaletteEditor();
@@ -4252,7 +4843,7 @@ function ntmAddPaletteRow() {
 }
 
 function ntmRenderConfirm() {
-  els.ntmConfirmName.textContent = ntmDraft.name || "(未命名)";
+  els.ntmConfirmName.textContent = ntmDraft.name || t("ntmUnnamedName");
   els.ntmConfirmPalette.replaceChildren();
   for (const p of ntmDraft.paletteDraft) {
     const row = document.createElement("div");
@@ -4261,7 +4852,7 @@ function ntmRenderConfirm() {
     sw.className = "ntm-cp-swatch";
     sw.style.background = p.color;
     const lb = document.createElement("span");
-    lb.textContent = p.label || "(未命名标签)";
+    lb.textContent = (isDefaultTag(p) ? displayTagLabel(p) : p.label) || t("ntmUnnamedTag");
     row.appendChild(sw);
     row.appendChild(lb);
     els.ntmConfirmPalette.appendChild(row);
@@ -4291,7 +4882,7 @@ async function ntmDoCreate() {
     else switchToTopicPage(topic.id);     // 平时：进新主题页
   } catch (e) {
     console.error("[createTopic]", e);
-    setLandingStatus(`创建主题失败：${e.message || e}`, true);
+    setLandingStatus(t("createTopicFailed", e.message || e), true);
   } finally {
     els.ntmConfirm.disabled = false;
   }
@@ -4317,6 +4908,15 @@ els.homeRecent.addEventListener("click", (e) => {
   const card = e.target.closest(".home-recent-item");
   if (card) openPdfFromTopic(card.dataset.topicId, card.dataset.pdfKey);
 });
+
+// 语言切换控件（仅首页）
+for (const sw of [els.langSwitchHome]) {
+  if (!sw) continue;
+  sw.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-lang]");
+    if (btn) switchLang(btn.dataset.lang);
+  });
+}
 
 els.tpLoadForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -4381,7 +4981,7 @@ async function renderThumbnails(pdfDoc) {
     wrap.dataset.pageNumber = String(i);
     wrap.tabIndex = 0;
     wrap.setAttribute("role", "button");
-    wrap.setAttribute("aria-label", `第 ${i} 页`);
+    wrap.setAttribute("aria-label", t("thumbPageAria", i));
 
     const canvas = document.createElement("canvas");
     const label = document.createElement("div");
@@ -4594,7 +5194,7 @@ els.commentList.addEventListener("click", (e) => {
     const ann = state.annotations.find((a) => a.id === commentId);
     if (!ann) return;
     const n = state.threads[commentId] ? state.threads[commentId].messages.length : 0;
-    const ok = window.confirm(`删除这条 comment？\n高亮原文 + ${n} 条讨论将一并清除（不可撤销）。`);
+    const ok = window.confirm(t("confirmDeleteComment", n));
     if (ok) deleteAnnotation(commentId);
     return;
   }
@@ -4855,7 +5455,7 @@ els.topicCardMenu.addEventListener("click", async (e) => {
   if (!id || id === DEFAULT_TOPIC_ID) return;
   if (action === "rename") {
     const cur = state.topics[id]?.name || "";
-    const next = window.prompt("新的主题名（≤ 30 字）：", cur);
+    const next = window.prompt(t("promptRenameTopic"), cur);
     if (next == null) return;            // 取消
     const trimmed = next.trim().slice(0, 30);
     if (!trimmed || trimmed === cur) return;
@@ -4865,11 +5465,7 @@ els.topicCardMenu.addEventListener("click", async (e) => {
     const topic = state.topics[id];
     if (!topic) return;
     const n = (topic.pdfKeys || []).length;
-    const ok = window.confirm(
-      `确认删除主题"${topic.name}"？\n` +
-      `${n > 0 ? `该主题下的 ${n} 篇论文 + 围绕它们的所有 annotation / 讨论将一并清除。\n` : ""}` +
-      `（不可撤销）`
-    );
+    const ok = window.confirm(t("confirmDeleteTopic", displayTopicName(topic), n));
     if (!ok) return;
     await deleteTopic(id);
     renderTopicGrid();
@@ -4933,13 +5529,13 @@ document.addEventListener("keydown", (e) => {
 const mention = (() => {
   // 候选表 —— 结构上可扩展，首版只放 @AI（@多角色 是后期功能，不做）
   const CANDIDATES = [
-    { insert: "AI", label: "@AI", hint: "召唤 AI 回复" },
+    { insert: "AI", label: "@AI", hintKey: "mentionAiHint" },
   ];
 
   const dropdown = document.createElement("div");
   dropdown.className = "mention-dropdown";
   dropdown.setAttribute("role", "listbox");
-  dropdown.setAttribute("aria-label", "@ 联想");
+  dropdown.setAttribute("aria-label", t("mentionAria"));
   dropdown.hidden = true;
   document.body.appendChild(dropdown);
 
@@ -5006,7 +5602,7 @@ const mention = (() => {
       name.textContent = c.label;
       const hint = document.createElement("span");
       hint.className = "mention-hint";
-      hint.textContent = c.hint;
+      hint.textContent = t(c.hintKey);
       row.append(name, hint);
       dropdown.appendChild(row);
     });
@@ -5114,6 +5710,9 @@ document.addEventListener("focusout", (e) => {
   }
 });
 
+// 启动即把静态 HTML 文案按持久化语言渲染一遍（DOM 已就绪——app.js 在 body 末尾加载）
+applyStaticI18n();
+
 // 启动后渲染主题列表：等 bootstrap 完成（加载完所有 topics）
 // bootstrap 失败时 state.topics 至少有内存兜底的 default
 _bootstrapPromise.then(() => {
@@ -5127,7 +5726,7 @@ _bootstrapPromise.then(() => {
   if (Object.keys(state.topics).length === 0) {
     state.topics[DEFAULT_TOPIC_ID] = {
       id: DEFAULT_TOPIC_ID,
-      name: "默认主题",
+      name: "示例主题",
       palette: DEFAULT_PALETTE.map((p) => ({ ...p })),
       pdfKeys: [],
       createdAt: new Date().toISOString(),

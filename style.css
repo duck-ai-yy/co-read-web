@@ -1663,3 +1663,35 @@ html, body {
   font-size: 12px;
   color: var(--ink-soft);
 }
+
+/* ────────────────────── 语言切换控件 ────────────────────── */
+.lang-switch {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.lang-switch button {
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.12s, color 0.12s;
+}
+.lang-switch button:hover { color: var(--ink); }
+.lang-switch button.active {
+  background: var(--accent);
+  color: #fff;
+}
+/* 首页：固定右上角 */
+#langSwitchHome {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
+  background: #fff;
+}
