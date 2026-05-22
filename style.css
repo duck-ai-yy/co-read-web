@@ -1280,7 +1280,7 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* v3-polish-2 #3：主题名前面的彩色 dot 已删（鸭鸭指出 dot 应去掉，emoji 在引用块里恢复）*/
+/* v3-polish-2 #3：主题名前面的彩色 dot 已删（按产品决策 dot 应去掉，emoji 在引用块里恢复）*/
 /* v3-polish #5：可改名的主题名 hint —— 鼠标变手 + hover 轻微底色 */
 .reader-topic-hint[data-editable="1"] {
   cursor: pointer;

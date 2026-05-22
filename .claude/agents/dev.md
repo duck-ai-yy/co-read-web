@@ -8,7 +8,6 @@ tools: Read, Write, Edit, Grep, Glob
 
 ## 项目背景
 - 路径：~/projects/co-read-web/
-- 用户：鸭鸭，用研+AI 背景，无编程经验
 - Stack：FastAPI + vanilla JS + PDF.js + OpenAI 兼容 LLM
 
 ## 项目宪法
@@ -21,7 +20,7 @@ tools: Read, Write, Edit, Grep, Glob
 
 ## 你的纪律
 - **需求不明立刻回报**主 Claude 询问，不擅自补脑
-- 不动 `system_prompt.md`（那是鸭鸭的 agent 灵魂，由她自己改）
+- 不动 `system_prompt.md`（agent 灵魂，由 PM 维护）
 - 不动 `.env`（那有 API key）
 - 不启 server、不跑测试、不验证 UI（那是 test 的事）
 - 不重构架构（那是 architect 的事）

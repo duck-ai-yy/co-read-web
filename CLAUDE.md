@@ -46,7 +46,7 @@
 
 ## 6. 敏捷开发原则
 - 小步快跑：每个迭代都跑得起来、能演示
-- 鸭鸭驱动：每个决策点让她确认，不擅自补脑
+- 决策点把关：每个产品决策交我确认，subagent 不擅自补脑
 - 反馈快：subagent 阶段性产出立即回报，不要憋大招
 - 临时方案明确标注 `TODO` / `XXX`，便于后续 refactor
 
@@ -68,7 +68,7 @@ co-read-web/
 ├── index.html           # 单页应用
 ├── app.js               # 前端逻辑 (vanilla JS)
 ├── style.css            # 极简样式
-├── system_prompt.md     # 鸭鸭定义的 agent 灵魂（subagent 不得修改）
+├── system_prompt.md     # agent 灵魂（我维护，subagent 不得改）
 ├── .env / .env.example  # provider 配置 + API keys（subagent 不得读 key 值）
 ├── requirements.txt
 ├── .claude/agents/      # 项目级 subagent 团队
@@ -80,15 +80,17 @@ co-read-web/
 
 ## 角色分工
 
-- **鸭鸭**：产品决策、system prompt 设计、约束设定
-- **主 Claude**：协调、对话翻译、调度 subagent、汇总反馈
-- **architect**：架构评估与重构（项目级 `.claude/agents/architect.md`）
+我（PM）设计这套 agent 团队并指挥它运转：
+
+- **PM（我）**：产品决策、system prompt 设计、约束设定、验收
+- **orchestrator（主 Claude）**：按我的需求协调、调度 subagent、汇总回报
+- **architect**：架构评估与重构（`.claude/agents/architect.md`）
 - **dev**：写代码（无 Bash，物理强制聚焦实现）
 - **test**：测试与报 bug（无 Edit，物理强制不改代码）
 
 ## subagent 调度约定
 
-- 由主 Claude 调度，subagent 不互相调度
-- 调度前主 Claude 必须给 subagent **明确任务 + 边界 + 期望产出格式**
-- subagent 完成立即回报，主 Claude 翻译成人话给鸭鸭
-- 大方向变更 → subagent 必须 escalate 回主 Claude，不擅自决定
+- 由 orchestrator 调度，subagent 之间不互相调度
+- 调度前 orchestrator 必须给 subagent **明确任务 + 边界 + 期望产出格式**
+- subagent 完成立即回报，orchestrator 汇总后向我交付
+- 大方向变更 → subagent 必须 escalate 回 orchestrator，不擅自决定

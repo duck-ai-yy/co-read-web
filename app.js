@@ -374,7 +374,7 @@ async function loadPdf({ url, file, topicId }) {
     });
 
     // v3-β: 把当前 PDF 关联到 targetTopic（pdfKeys 去重 push + 更新 lastOpened 时间）
-    // 同一 pdfKey 在多个主题间可共享引用（鸭鸭已拍板：annotations 按 topicId 区分）
+    // 同一 pdfKey 在多个主题间可共享引用（PM 拍板：annotations 按 topicId 区分）
     // 异步写 IDB，不阻塞渲染；失败已在 saveTopic 内部 catch
     addPdfToTopic(state.currentTopicId, pdfKey, title).catch((e) =>
       console.warn("[addPdfToTopic]", e)
@@ -395,7 +395,7 @@ async function loadPdf({ url, file, topicId }) {
     pdfViewer.setDocument(state.pdf);
     linkService.setDocument(state.pdf, null);
     // v3-thumb-zoom：自己实现的 mini thumbnail viewer，串行渲染所有页面到 canvas
-    // fire-and-forget：渲染失败不阻塞主流程（鸭鸭还能正常读 PDF，只是 sidebar 不可用）
+    // fire-and-forget：渲染失败不阻塞主流程（用户还能正常读 PDF，只是 sidebar 不可用）
     renderThumbnails(state.pdf).catch((e) => console.warn("[renderThumbnails]", e));
 
     // v2-a：异步加载已保存的 annotation。pagerendered 时会按需 render
@@ -561,7 +561,7 @@ function updateFindStatus(evt) {
 }
 
 // ── v5：实时搜索结果下拉预览 ──────────────────────────────
-// 鸭鸭需求：输入关键词、还没回车，就在 findBar 下方浮出匹配预览。
+// 需求：输入关键词、还没回车，就在 findBar 下方浮出匹配预览。
 // 实现走最简直觉：直接在 state.pdfText 上 grep（pdfText 已按 "--- 第 N 页 ---" 分页存储），
 // 不 hook pdf.js 内部 matches，跟页内黄色高亮（findController）完全解耦。
 const FIND_DD_MAX = 50;          // 最多渲染 50 条，避免下拉过长（极常见词如 "the" 几百处）
@@ -658,7 +658,7 @@ function renderFindDropdown(query) {
 }
 
 // pdf.js find / scrollPageIntoView 跳到匹配时只对齐垂直、会顺手重置水平 scrollLeft。
-// 鸭鸭要求：搜索跳转时左右滚动条不动。find 的滚动是异步的（搜索算完才滚），
+// 需求：搜索跳转时左右滚动条不动。find 的滚动是异步的（搜索算完才滚），
 // 单次 rAF 赶不上 → 连续钉若干帧把 scrollLeft 锁回原值（~330ms 覆盖异步滚动）。
 function withPreservedScrollLeft(trigger) {
   const prev = els.viewerContainer.scrollLeft;
@@ -724,7 +724,7 @@ const PALETTE_HEX = {
 };
 
 // ────────────────────── v3-α 主题数据层 ──────────────────────
-// 默认主题色板：6 个内置 tag。按鸭鸭拍板（G3 + G4）：emoji 固定 6 个、保持现 6 色不调整。
+// 默认主题色板：6 个内置 tag。按产品决策（G3 + G4）：emoji 固定 6 个、保持现 6 色不调整。
 // 字段（task 简化）：{ id, emoji, label, color }
 //   - id 是内部锚（不展示给用户），用于 annotation.color 旧索引兼容（'red'/'green'/...）
 //   - 给 LLM 的 system 注入只 emit emoji + label，不 emit id（system_prompt.md 已更新格式）
@@ -1307,7 +1307,7 @@ function describeSelection(sel) {
     }));
     // v3-polish-4 #2：脚注 heuristic —— 字号明显小于正文（heightPct < 正文中位数 * 0.7）的 rect 多半是脚注
     // 论文脚注的横杠分隔条由 canvas 画，不在 textLayer 里、无法直接检测；只能靠字号特征 heuristic
-    // trade-off：极端 mix 字号文档（小字标题/角标）可能误杀，但跨页选段把脚注混进高亮的体验更糟，鸭鸭可接受
+    // trade-off：极端 mix 字号文档（小字标题/角标）可能误杀，但跨页选段把脚注混进高亮的体验更糟，产品上可接受
     // 中位数取所有 rect heightPct 的中位，再以 0.7 倍为阈值（约下限 70% 字号）
     const heightsSorted = rectsRaw.map((r) => r.heightPct).sort((a, b) => a - b);
     const pageMedianHeight = heightsSorted.length > 0
@@ -2485,7 +2485,7 @@ function setLandingStatus(text, isError = false) {
 
 // ────────────────────── v3-β 主题 UI ──────────────────────
 // 三层视图：topicList (landing) / topicPage / reader
-// 关键设计决策（鸭鸭已拍板，严格遵守）：
+// 关键设计决策（PM 拍板，严格遵守）：
 //   - 主题创建后 palette 完全冻结；palette 编辑器只在新建流程出现
 //   - 默认主题"默认主题" 不可改名、不可删除（menu 不显示）
 //   - 每个 tag = {id, emoji, label≤20字, color}；emoji 固定（创建时从 EMOJI_POOL 分配）
@@ -2752,7 +2752,7 @@ function openPdfFromTopic(topicId, pdfKey) {
 }
 
 // ── reader 顶栏 topic hint 更新 ──
-// v3-polish-2 #3：去掉主题名前面的彩色 dot（鸭鸭说"emoji 加回去"指的是引用块，不是主题 dot）
+// v3-polish-2 #3：去掉主题名前面的彩色 dot（产品反馈"emoji 加回去"指的是引用块，不是主题 dot）
 //   ::before 的 dot 已在 CSS 中删除；这里不再注入 --topic-dot-color
 function updateReaderTopicHint() {
   const topic = state.topics[state.currentTopicId];
@@ -3840,7 +3840,7 @@ els.findNext.addEventListener("click", () => findAgain(false));
 
 // 自己实现的 mini thumbnail renderer
 // 不依赖 pdf.js 的私有 PDFThumbnailViewer（CDN 的 pdf_viewer.mjs 不导出），用已有 PDFDocumentProxy.getPage + canvas
-// 串行 await：50+ 页大 PDF 会卡 5-10 秒，鸭鸭日常论文 < 30 页可接受；分批 lazy 留 v3.1
+// 串行 await：50+ 页大 PDF 会卡 5-10 秒，日常论文 < 30 页可接受；分批 lazy 留 v3.1
 async function renderThumbnails(pdfDoc) {
   const view = els.thumbnailView;
   view.replaceChildren();   // 清旧（切论文时复用此函数）
@@ -3975,7 +3975,7 @@ document.addEventListener("mousedown", (e) => {
 // v5-fix（Bug 1 抖动）：打字时 **只** 做 dropdown 预览，绝不碰 PDF 页面。
 //   旧路径在 input 实时事件里 dispatchFind("") → pdf.js find → 自动 scroll 到匹配，
 //   用户每打一个字就滚一次 = 整页乱抖。
-//   正确语义（鸭鸭"还没回车前先出现下拉框预览"）：
+//   正确语义（"还没回车前先出现下拉框预览"）：
 //     - input 阶段：纯 grep dropdown 预览，不 dispatch pdf.js find / 不高亮 / 不滚动
 //     - 只有 Enter / 点 dropdown 结果 时，才 dispatchFind → 页内高亮 + 跳转
 //   _findDispatchedQuery 记录"已经 dispatch 给 pdf.js find 的 query"，
@@ -4163,7 +4163,7 @@ els.viewerContainer.addEventListener("mouseup", (e) => {
   // 点击高亮 rect —— 由 rect 自己的 click handler 处理，不抢
   if (e.target.closest && e.target.closest(".hl-rect")) return;
   // v3-polish-4 #3：选段卡顿排查 —— 标记 mouseup → palette 整条路径耗时
-  // 鸭鸭反馈"选段没选中似乎有点卡顿"。用 console.time/timeEnd 让 test 抓样本，
+  // 用户反馈"选段没选中似乎有点卡顿"。用 console.time/timeEnd 让 test 抓样本，
   // 后续若发现热点（如 getClientRects 数百个 rect）再做优化
   console.time("[selection] mouseup→palette");
   // v2-b：去掉 setTimeout(0)，改用 requestAnimationFrame
