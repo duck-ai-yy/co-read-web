@@ -1197,6 +1197,518 @@ async function cleanDirtyAnnotations() {
   }
 }
 
+// ──────────────────────────────────────────
+// 首页示例 paper：首次访问 seeding
+// ──────────────────────────────────────────
+// 新访客首页空空如也，看不到产品长什么样。这里预置一条「示例」——
+// Anthropic Clio 论文（arXiv 2412.13678），带 3 条不同颜色的标注 + 已生成的
+// primeSummary 摘要 + 一段人机讨论。访客点开 = 正常打开阅读器，后续功能（含 live @AI）全部正常。
+//
+// 设计要点：
+//   - EXAMPLE_SEED 是「烤进去」的常量：topic + 3 annotations + 4 threads（含 main 的 primeSummary）。
+//     thread 里已带 assistant 回复 → 访客点开不会再触发一次 AI 调用（省钱、省时）。
+//   - 示例 topic 直接占据「默认主题」的位置（id = DEFAULT_TOPIC_ID）：首次访客 seed 示例后
+//     IDB 里就有了默认主题，ensureDefaultTopic 复用它、不再另建空默认主题；用户想要自己的
+//     主题自行新建。这样首次流程是「seed 示例 → 显示首页 → 无 modal」。
+//   - localStorage 标志位 EXAMPLE_SEED_FLAG 控制幂等：注入过 / 用户已删 → 不再注入。
+//   - 在 _bootstrapPromise 里、_isFirstRun 判定「之前」跑：seeding 后 IDB 里就有 topic 了，
+//     首次访客不会再被弹「新建主题」modal，直接看到示例。
+//   - createdAt 用固定值（非 Date.now()）→ 常量稳定，不破坏任何缓存前缀。
+const EXAMPLE_SEED_FLAG = "coread_example_seeded";
+// 示例 topic 的 id = DEFAULT_TOPIC_ID（"default"）—— 示例主题即默认主题。
+// 示例 PDF 的 pdfKey（renderHomeRecent 凭这个识别示例条目：换标题 + 加「示例」小标签）。
+const EXAMPLE_PDF_KEY = "url:https://arxiv.org/abs/2412.13678";
+const EXAMPLE_RECENT_TITLE = "Clio 论文（点开看 co-read 怎么用）";
+const EXAMPLE_SEED =
+  {
+    "pdfKey": "url:https://arxiv.org/abs/2412.13678",
+    "topic": {
+      "id": "default",
+      "name": "默认主题",
+      "palette": [
+        {
+          "id": "red",
+          "emoji": "🔴",
+          "label": "没懂",
+          "color": "#ff5e5e",
+          "aiHint": "把这段彻底讲透，用最简单的话拆解，确认他懂了再停"
+        },
+        {
+          "id": "yellow",
+          "emoji": "🟡",
+          "label": "重点",
+          "color": "#f5d042",
+          "aiHint": "帮他把这段压缩成能直接进笔记的精炼表述"
+        },
+        {
+          "id": "blue",
+          "emoji": "🔵",
+          "label": "可借鉴",
+          "color": "#4a9eff",
+          "aiHint": "帮他想清楚这个方法/思路怎么迁移到他自己的研究"
+        },
+        {
+          "id": "purple",
+          "emoji": "🟣",
+          "label": "存疑",
+          "color": "#b06dff",
+          "aiHint": "顺着他的疑问深挖，给支持或反驳的依据，不和稀泥"
+        },
+        {
+          "id": "green",
+          "emoji": "🟢",
+          "label": "要引用",
+          "color": "#54d062"
+        },
+        {
+          "id": "gray",
+          "emoji": "⚪",
+          "label": "待查",
+          "color": "#b8b8b8",
+          "aiHint": "帮他判断这个说法可不可信、该怎么核实"
+        }
+      ],
+      "pdfKeys": [
+        "url:https://arxiv.org/abs/2412.13678"
+      ],
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    },
+    "annotations": [
+      {
+        "id": "2430dfca-9d83-4076-974f-d39fbb7e689e",
+        "color": "yellow",
+        "text": "issues, we present Clio (Claude insights and observations), a privacy-preservingplatform that uses AI assistants themselves to analyze and surface aggregated usagepatterns across millions of conversations, without the need for human reviewers toread raw conversations. We validate this can be done with a high degree of accuracyand privacy by conducting extensive evaluations. We demonstrate Clio’s usefulness",
+        "pages": [
+          {
+            "page": 1,
+            "text": "issues, we present Clio (Claude insights and observations), a privacy-preservingplatform that uses AI assistants themselves to analyze and surface aggregated usagepatterns across millions of conversations, without the need for human reviewers toread raw conversations. We validate this can be done with a high degree of accuracyand privacy by conducting extensive evaluations. We demonstrate Clio’s usefulness",
+            "rects": [
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.4566193812430633,
+                "widthPct": 0.16895281035324622,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.3963945761494253,
+                "topPct": 0.45939407602663707,
+                "widthPct": 0.016908886788905352,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.3963945761494253,
+                "topPct": 0.4566193812430633,
+                "widthPct": 0.016908886788905352,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.4129961386494253,
+                "topPct": 0.45939407602663707,
+                "widthPct": 0.03181128666318696,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.4129961386494253,
+                "topPct": 0.4566193812430633,
+                "widthPct": 0.03181128666318696,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.44429103807471265,
+                "topPct": 0.45939407602663707,
+                "widthPct": 0.005421605603448276,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.44429103807471265,
+                "topPct": 0.4566193812430633,
+                "widthPct": 0.005421605603448276,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.44839933548850575,
+                "topPct": 0.45939407602663707,
+                "widthPct": 0.004175646551724138,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.44839933548850575,
+                "topPct": 0.4566193812430633,
+                "widthPct": 0.004175646551724138,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.45299030172413796,
+                "topPct": 0.45939407602663707,
+                "widthPct": 0.07865300671807651,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.45299030172413796,
+                "topPct": 0.4566193812430633,
+                "widthPct": 0.07865300671807651,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.5279947916666666,
+                "topPct": 0.45939407602663707,
+                "widthPct": 0.005421605603448276,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.5279947916666666,
+                "topPct": 0.4566193812430633,
+                "widthPct": 0.005421605603448276,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.5320918642241379,
+                "topPct": 0.45939407602663707,
+                "widthPct": 0.009541127873563218,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.5320918642241379,
+                "topPct": 0.4566193812430633,
+                "widthPct": 0.009541127873563218,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.5403982579022989,
+                "topPct": 0.45939407602663707,
+                "widthPct": 0.2370715086487518,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.5403982579022989,
+                "topPct": 0.4566193812430633,
+                "widthPct": 0.2370715086487518,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.47319818257491675,
+                "widthPct": 0.12212972531373474,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.47042348779134296,
+                "widthPct": 0.12212972531373474,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.3488909841954023,
+                "topPct": 0.47319818257491675,
+                "widthPct": 0.005421605603448276,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.3488909841954023,
+                "topPct": 0.47042348779134296,
+                "widthPct": 0.005421605603448276,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.35269621048850575,
+                "topPct": 0.47319818257491675,
+                "widthPct": 0.15891695570671696,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.35269621048850575,
+                "topPct": 0.47042348779134296,
+                "widthPct": 0.15891695570671696,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.5063981681034483,
+                "topPct": 0.47319818257491675,
+                "widthPct": 0.005421605603448276,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.5063981681034483,
+                "topPct": 0.47042348779134296,
+                "widthPct": 0.005421605603448276,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.5100911458333334,
+                "topPct": 0.47319818257491675,
+                "widthPct": 0.26711580123024425,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.5100911458333334,
+                "topPct": 0.47042348779134296,
+                "widthPct": 0.26711580123024425,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.48699361820199777,
+                "widthPct": 0.5622340235216864,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.484218923418424,
+                "widthPct": 0.5622340235216864,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.5007977247502775,
+                "widthPct": 0.5605806372631555,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.49802302996670367,
+                "widthPct": 0.5605806372631555,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.5117230854605993,
+                "widthPct": 0.556329135237069,
+                "heightPct": 0.017758046614872364
+              }
+            ]
+          }
+        ],
+        "topicId": "default",
+        "createdAt": "2025-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "f5af7756-be07-4386-a7cc-68afb3ce016b",
+        "color": "red",
+        "text": "(e.g., conversations in Japanese discuss elder care and aging populations at higher-than-typical rates). Second, we use Clio to",
+        "pages": [
+          {
+            "page": 1,
+            "text": "(e.g., conversations in Japanese discuss elder care and aging populations at higher-than-typical rates). Second, we use Clio to",
+            "rects": [
+              {
+                "leftPct": 0.23449847341954022,
+                "topPct": 0.5944176609322974,
+                "widthPct": 0.5625661214192709,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.6082217674805771,
+                "widthPct": 0.2905711908450072,
+                "heightPct": 0.017758046614872364
+              }
+            ]
+          }
+        ],
+        "topicId": "default",
+        "createdAt": "2025-01-01T00:00:00.000Z"
+      },
+      {
+        "id": "d2c4ed6a-3826-4252-a275-ace1e8a4ebd6",
+        "color": "blue",
+        "text": "make our systems safer by identifyingcoordinated attempts to abuse our systems, monitoring for unknown unknownsduring critical periods like launches of new capabilities or major world events, andimproving our existing monitoring systems. We also discuss the limitations of our",
+        "pages": [
+          {
+            "page": 1,
+            "text": "make our systems safer by identifyingcoordinated attempts to abuse our systems, monitoring for unknown unknownsduring critical periods like launches of new capabilities or major world events, andimproving our existing monitoring systems. We also discuss the limitations of our",
+            "rects": [
+              {
+                "leftPct": 0.5112922054597702,
+                "topPct": 0.6082217674805771,
+                "widthPct": 0.16721370302397628,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.6706963900862069,
+                "topPct": 0.6109964622641509,
+                "widthPct": 0.005421605603448276,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.6706963900862069,
+                "topPct": 0.6082217674805771,
+                "widthPct": 0.005421605603448276,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.6746924389367817,
+                "topPct": 0.6109964622641509,
+                "widthPct": 0.09666644567730782,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.6746924389367817,
+                "topPct": 0.6082217674805771,
+                "widthPct": 0.09666644567730782,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.6246965177580466,
+                "widthPct": 0.5611909011314655,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.6219218229744728,
+                "widthPct": 0.5611909011314655,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.6384919533851277,
+                "widthPct": 0.5630961451037176,
+                "heightPct": 0.012572835738068812
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.6357172586015538,
+                "widthPct": 0.5630961451037176,
+                "heightPct": 0.017758046614872364
+              },
+              {
+                "leftPct": 0.2350933908045977,
+                "topPct": 0.6495213651498335,
+                "widthPct": 0.5632817060097881,
+                "heightPct": 0.017758046614872364
+              }
+            ]
+          }
+        ],
+        "topicId": "default",
+        "createdAt": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "threads": [
+      {
+        "id": "2430dfca-9d83-4076-974f-d39fbb7e689e",
+        "topicId": "default",
+        "pdfKey": "url:https://arxiv.org/abs/2412.13678",
+        "annotationId": "2430dfca-9d83-4076-974f-d39fbb7e689e",
+        "anchorPage": 1,
+        "anchorColor": "yellow",
+        "label": "p.1 · 🟡",
+        "customName": "",
+        "quotedText": "issues, we present Clio (Claude insights and observations), a privacy-preservingplatform that uses AI assistants themselves to analyze and surface aggregated usagepatterns across millions of conversations, without the need for human reviewers toread raw conversations. We validate this can be done with a high degree of accuracyand privacy by conducting extensive evaluations. We demonstrate Clio’s usefulness",
+        "messages": [
+          {
+            "role": "user",
+            "content": "论文一句话定义：用 AI 自己分析海量对话，全程不让人读原始对话。这是 Clio 的核心卖点。",
+            "includedInNote": true
+          }
+        ],
+        "createdAt": 1735689600000
+      },
+      {
+        "id": "d2c4ed6a-3826-4252-a275-ace1e8a4ebd6",
+        "topicId": "default",
+        "pdfKey": "url:https://arxiv.org/abs/2412.13678",
+        "annotationId": "d2c4ed6a-3826-4252-a275-ace1e8a4ebd6",
+        "anchorPage": 1,
+        "anchorColor": "blue",
+        "label": "p.1 · 🔵",
+        "customName": "",
+        "quotedText": "make our systems safer by identifyingcoordinated attempts to abuse our systems, monitoring for unknown unknownsduring critical periods like launches of new capabilities or major world events, andimproving our existing monitoring systems. We also discuss the limitations of our",
+        "messages": [
+          {
+            "role": "user",
+            "content": "可借鉴：把分析平台同时用作安全监控（发现协同滥用、监测 unknown unknowns）这个双重定位，值得迁移到我自己的系统评估里。",
+            "includedInNote": true
+          }
+        ],
+        "createdAt": 1735689600000
+      },
+      {
+        "id": "f5af7756-be07-4386-a7cc-68afb3ce016b",
+        "topicId": "default",
+        "pdfKey": "url:https://arxiv.org/abs/2412.13678",
+        "annotationId": "f5af7756-be07-4386-a7cc-68afb3ce016b",
+        "anchorPage": 1,
+        "anchorColor": "red",
+        "label": "p.1 · 🔴",
+        "customName": "",
+        "quotedText": "(e.g., conversations in Japanese discuss elder care and aging populations at higher-than-typical rates). Second, we use Clio to",
+        "messages": [
+          {
+            "role": "user",
+            "content": "[CURRENT_PAGE: 1]\n这句里说日语对话讨论养老的比例偏高，这个发现是怎么得出来的？Clio 是怎么保证这种跨语言模式不是噪声的？",
+            "includedInNote": true
+          },
+          {
+            "role": "assistant",
+            "content": "这个发现来自 Clio 的多语言分析流程。具体来说，Clio 先对每段对话提取 facets，包括识别对话使用的语言（通过 Claude 3 Haiku 分类，再用 `langcodes` 等工具验证〔p.38〕），以及提取对话主题（比如 \"What task is the model being asked to perform?\" 这个 facet〔p.7〕）。然后通过语义聚类——先用 `all-mpnet-base-v2` 做 embedding，再用 k-means 聚类〔p.22–23〕——把日语对话中关于 \"elder care\" 的集群单独识别出来。\n\n**这种跨语言模式不是噪声，而是有双层校验支撑的：**\n\n1. **统计显著性检验**：Clio 会比较每个语言在某个集群中的占比 vs. 该语言在整体样本中的基数比例（base rate），计算\"相对于基数的倍数\"——Figure 7 里就是用的这个方法〔p.9〕。日语在 elder care 集群中的比例如果显著高于它在全部对话中的比例，才被视作有意义的差异。\n\n2. **多语言端到端验证**：附录 C 的合成数据实验表明，Clio 在 15 种语言上的主题重建准确率都在 **92% 以上**（日语 94.4%）〔p.29〕。这说明聚类和标签生成对日语这类非英语语料同样可靠，而不是因为 embedding 模型对日语有偏而导致误分类。\n\n此外，在隐私层（Min. accounts ≥ N）和聚类聚合阈值之后，还经过人工抽样审查（Appendix C.1），确认集群标题和内容一致——所以 \"elder care\" 集群不是零散的噪声形成的偶然模式〔p.26〕。",
+            "includedInNote": true
+          }
+        ],
+        "createdAt": 1735689600000
+      },
+      {
+        "id": "main",
+        "topicId": "default",
+        "pdfKey": "url:https://arxiv.org/abs/2412.13678",
+        "annotationId": null,
+        "anchorPage": null,
+        "anchorColor": null,
+        "label": "主对话",
+        "customName": "",
+        "quotedText": "",
+        "messages": [
+          {
+            "role": "user",
+            "content": "[CURRENT_PAGE: 1]\n请给这篇论文一个 100 字以内的核心总结（What / Why / How / Result）。",
+            "includedInNote": true
+          },
+          {
+            "role": "assistant",
+            "content": "这篇论文介绍 **Clio**，一个利用 AI 模型本身对百万级用户对话进行隐私保护的聚合分析平台。**目的**是解决理解真实世界 AI 使用情况时面临的隐私、伦理和规模难题。**方法**是通过对话摘要、语义聚类和层级可视化来提取洞察。**结果**揭示了 Claude.ai 上编码、写作和研究的常见用例，并成功发现了滥用模式，提升了安全监控能力。",
+            "includedInNote": true
+          }
+        ],
+        "createdAt": 1735689600000
+      }
+    ]
+  };
+
+// 把 EXAMPLE_SEED 写进 IndexedDB（topic + annotations + threads）。
+// 幂等：localStorage 标志位已设 → 直接跳过（注入过，或用户删了示例后不再恢复）。
+// 失败容忍：IDB 不可用时各 save* 函数内部已降级到内存兜底；这里整体 try/catch 兜底。
+// 返回值：true = 本次注入了；false = 跳过。
+async function seedExampleData() {
+  try {
+    if (localStorage.getItem(EXAMPLE_SEED_FLAG)) return false;
+  } catch (_) {
+    // localStorage 不可用（隐私模式 / 禁用）→ 无法记标志，干脆不 seed，避免每次启动重复注入
+    return false;
+  }
+  try {
+    const seed = EXAMPLE_SEED;
+    await saveTopic(seed.topic);
+    await saveAnnotations(seed.pdfKey, seed.annotations);
+    for (const th of seed.threads) {
+      // threads store keyPath=id；直接 put 整条记录（含 topicId / pdfKey / messages）
+      await new Promise((resolve) => {
+        openIdb().then((db) => {
+          const tx = db.transaction(IDB_STORE_THREADS, "readwrite");
+          tx.objectStore(IDB_STORE_THREADS).put(th);
+          tx.oncomplete = resolve;
+          tx.onerror = resolve;
+        }).catch(() => { _memThreads.set(th.id, th); resolve(); });
+      });
+    }
+    try { localStorage.setItem(EXAMPLE_SEED_FLAG, "1"); } catch (_) {}
+    console.log("[seedExampleData] example paper seeded");
+    return true;
+  } catch (e) {
+    console.warn("[seedExampleData]", e);
+    return false;
+  }
+}
+
 // 启动期 migration 总入口：按顺序跑、最后统一写版本号
 // 设计：每个 step 内部已经容错；本函数只负责"跑过的版本不再跑"
 // 现状：CURRENT_MIGRATION_VERSION = 4
@@ -1231,15 +1743,21 @@ async function runMigrations() {
 //   非首次 → 照旧 ensureDefaultTopic 兜底（保证 default 一直在）。
 let _isFirstRun = false;
 const _bootstrapPromise = (async () => {
+  // 首次访问 seeding：把示例 Clio 论文写进 IDB（幂等，localStorage 标志位防重）。
+  // 必须在「看 IDB 里有没有 topic」之前跑 —— seeding 后 IDB 里就有默认主题（含示例）了，
+  // 下面的 existing.length 判定就不会把首次访客当 _isFirstRun，从而跳过「新建主题」modal，
+  // 直接让访客在首页看到示例条目。ensureDefaultTopic 之后也会直接复用这个 default，不另建空主题。
+  const seeded = await seedExampleData();
   // 先看 IDB 里有没有 topic（不能先 ensureDefaultTopic，否则它会静默建出 default）
   const existing = await loadAllTopics();
-  if (existing.length === 0) {
-    // 首次使用：不建默认主题，留给 modal 流程。但 migration 仍要跑（幂等、无害）。
+  if (existing.length === 0 && !seeded) {
+    // 首次使用且没 seed（如 localStorage 不可用）：不建默认主题，留给 modal 流程。
+    // migration 仍要跑（幂等、无害）。
     _isFirstRun = true;
     await runMigrations();
     return;
   }
-  // 非首次：照旧确保 default 存在 + 迁移 + 全量加载
+  // 非首次（或刚 seed 了示例）：确保 default 存在 + 迁移 + 全量加载
   await ensureDefaultTopic();
   // v3-γ：用统一 migration 入口（ann 补 topicId + default.pdfKeys 回填，靠 metadata.migrationVersion 幂等）
   await runMigrations();
@@ -2367,9 +2885,18 @@ function renderHomeRecent() {
     card.className = "home-recent-item";
     card.dataset.pdfKey = it.pdfKey;
     card.dataset.topicId = it.topicId;
+    const isExample = it.pdfKey === EXAMPLE_PDF_KEY;
     const name = document.createElement("span");
     name.className = "hr-name";
-    name.textContent = deriveTitleFromPdfKey(it.pdfKey);
+    // 示例条目用特殊标题，和真实论文区分；并加一个浅色「示例」小标签
+    name.textContent = isExample ? EXAMPLE_RECENT_TITLE : deriveTitleFromPdfKey(it.pdfKey);
+    if (isExample) {
+      card.classList.add("home-recent-item-example");
+      const badge = document.createElement("span");
+      badge.className = "hr-badge";
+      badge.textContent = "示例";
+      name.appendChild(badge);
+    }
     const topic = document.createElement("span");
     topic.className = "hr-topic";
     topic.textContent = it.topicName;

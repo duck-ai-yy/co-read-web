@@ -69,7 +69,35 @@ html, body {
   white-space: nowrap;
 }
 .hr-topic { flex: 0 0 auto; font-size: 12px; color: var(--ink-soft); opacity: 0.8; }
-.home-manage { margin-top: 24px; font-size: 13px; }
+/* 首页示例条目：浅色「示例」小标签，和真实论文区分 */
+.hr-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 999px;
+  color: var(--ink-soft);
+  background: rgba(74, 158, 255, 0.12);
+  border: 1px solid rgba(74, 158, 255, 0.3);
+  vertical-align: 1px;
+}
+/* 「我的主题」入口 —— 描边胶囊按钮，一眼可点；视觉重量低于 hero 输入框，与最近在读列表协调 */
+.home-manage {
+  margin-top: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.home-manage:hover { border-color: var(--ink); background: var(--surface-hover, rgba(0,0,0,0.03)); }
 /* 页脚版权 —— 沉到视口底部，安静低调，不跟主内容挤 */
 .home-copyright {
   position: absolute;

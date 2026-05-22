@@ -77,7 +77,7 @@
     overflow: hidden;
     margin-bottom: 20px;
   }
-  .feature figure { background: var(--bg); border-bottom: 1px solid var(--line); }
+  .feature figure { background: var(--bg); border-top: 1px solid var(--line); }
   .feature img { display: block; width: 100%; height: auto; }
   .feature .body { padding: 32px 22px 24px; }
   .feature h3 {
@@ -149,10 +149,6 @@
   /* ===== 隐私 ===== */
   .privacy {
     margin-top: 40px;
-    padding: 16px 18px;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
     font-size: 0.86rem;
     line-height: 1.7;
     color: var(--ink-soft);
@@ -207,9 +203,6 @@
   <div class="section-label">三个核心玩法</div>
 
   <article class="feature">
-    <figure>
-      <img src="/guide-assets/theme1-palette.jpeg" alt="选中论文文字后浮出的彩色标签色板">
-    </figure>
     <div class="body">
       <h3><span class="num">1</span>划线 = 打标签</h3>
       <p>选中论文里的一段文字，浮出一排彩色标签 —— 选一个，这段就被标记并归类。</p>
@@ -221,26 +214,29 @@
         <span class="tag-chip"><span class="dot" style="background:#f5d042"></span>课题相关</span>
       </div>
     </div>
+    <figure>
+      <img src="/guide-assets/theme1-palette.jpeg" alt="选中论文文字后浮出的彩色标签色板">
+    </figure>
   </article>
 
   <article class="feature">
-    <figure>
-      <img src="/guide-assets/theme2-compose.jpeg" alt="标记后弹出的批注框，输入 @AI 即可提问">
-    </figure>
     <div class="body">
       <h3><span class="num">2</span>@AI 就地提问</h3>
       <p>标记后弹出小框：直接打字 = 给自己记批注；打 <code>@AI</code> + 问题 = AI 围绕这段原文回答你。</p>
     </div>
+    <figure>
+      <img src="/guide-assets/theme2-compose.jpeg" alt="标记后弹出的批注框，输入 @AI 即可提问">
+    </figure>
   </article>
 
   <article class="feature">
-    <figure>
-      <img src="/guide-assets/theme3-panel.jpeg" alt="右栏汇总所有标注与讨论的列表">
-    </figure>
     <div class="body">
       <h3><span class="num">3</span>一处管全部</h3>
       <p>右栏汇总所有标注与讨论，点一条跳回原文；顶部一键导出 Markdown 笔记。</p>
     </div>
+    <figure>
+      <img src="/guide-assets/theme3-panel.jpeg" alt="右栏汇总所有标注与讨论的列表">
+    </figure>
   </article>
 
   <!-- 隐私 -->
@@ -250,7 +246,6 @@
 
   <!-- 底部 -->
   <footer class="foot">
-    <a class="cta" href="https://co-read-web.onrender.com/">开始试用 →</a>
     <p class="copyright">© 2026 duck-ai-yy</p>
   </footer>
 
