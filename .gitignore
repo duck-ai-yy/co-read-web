@@ -1,6 +1,10 @@
 # 敏感 —— 含真实 API key，绝不入库
 .env
 
+# 开发 harness 不公开（agent prompts / 项目宪法）
+.claude/
+CLAUDE.md
+
 # Python 虚拟环境
 .venv/
 __pycache__/

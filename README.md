@@ -17,16 +17,6 @@ Co-Read 是一个 PDF 论文伴读工具：
 
 它是科研工具 Theoria 的第一步。
 
-## 怎么造的
-
-这个项目不是一行行手写的 —— 我设计了一套 agent harness，指挥 AI 编排团队把它做出来、测好、上线。
-
-- **[`CLAUDE.md`](CLAUDE.md)** —— 项目宪法：6 条约束 + 冲突时的优先级规则，约束所有 AI 协作。
-- **[`.claude/agents/`](.claude/agents)** —— 我定义的三个**受限 subagent 角色**：architect（评估/重构）、dev（写码，无 Bash —— 物理强制聚焦实现）、test（测试，无 Edit —— 物理强制不改代码）。用工具权限做角色隔离，比靠提示词"请只做 X"更硬。
-- 我做产品决策、定约束、验收；orchestrator 按我的需求调度 subagent 执行。
-
-这套 harness 本身就是项目的一部分。
-
 ## 技术栈
 
 - 前端：vanilla JS（无框架、无构建）、pdf.js、IndexedDB（笔记只存浏览器本地，不上传服务器）
