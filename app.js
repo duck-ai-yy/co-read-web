@@ -231,6 +231,25 @@ const I18N = {
     // 示例条目
     exampleRecentTitle: "Clio 论文（点开看 co-read 怎么用）",
     defaultTopicName: "示例主题",
+    // 引用 / Cite
+    citeBtn: "引用",
+    citeBtnTitle: "生成本篇论文的引用",
+    citeTitle: "引用本文",
+    citeCloseAria: "关闭",
+    citeMetaHead: "元数据（可编辑）",
+    citeFieldTitle: "标题",
+    citeFieldAuthors: "作者",
+    citeFieldYear: "年份",
+    citeFieldVenue: "出处 / 期刊",
+    citeFieldDoi: "DOI / arXiv ID",
+    citeAuthorsPlaceholder: "多位作者用分号或逗号分隔",
+    citeFormatHead: "引用格式",
+    citeOutputHead: "引用文本",
+    citeCopyBtn: "复制",
+    citeCopiedBtn: "已复制 ✓",
+    citeFetching: "正在抓取元数据…",
+    citeFetchFailed: "未能自动抓取，请手动填写。",
+    citeEmptyHint: "暂无元数据，请填写后生成引用。",
   },
   en: {
     htmlLang: "en",
@@ -396,6 +415,25 @@ const I18N = {
     langSwitchAria: "语言 / Language",
     exampleRecentTitle: "Clio paper (open it to see how co-read works)",
     defaultTopicName: "Sample topic",
+    // 引用 / Cite
+    citeBtn: "Cite",
+    citeBtnTitle: "Generate a citation for this paper",
+    citeTitle: "Cite this paper",
+    citeCloseAria: "Close",
+    citeMetaHead: "Metadata (editable)",
+    citeFieldTitle: "Title",
+    citeFieldAuthors: "Authors",
+    citeFieldYear: "Year",
+    citeFieldVenue: "Venue / Journal",
+    citeFieldDoi: "DOI / arXiv ID",
+    citeAuthorsPlaceholder: "Separate multiple authors with ; or ,",
+    citeFormatHead: "Citation style",
+    citeOutputHead: "Citation",
+    citeCopyBtn: "Copy",
+    citeCopiedBtn: "Copied ✓",
+    citeFetching: "Fetching metadata…",
+    citeFetchFailed: "Could not auto-fetch, please fill in manually.",
+    citeEmptyHint: "No metadata yet — fill in fields to generate a citation.",
   },
 };
 // 取当前语言字符串：t("key") 或 t("key", ...args) 对函数型条目求值
@@ -599,6 +637,19 @@ const els = {
   cmtSummary: $("cmtSummary"),
   commentList: $("commentList"),
   readerExportBtn: $("readerExportBtn"),
+  // 引用 / Cite
+  readerCiteBtn: $("readerCiteBtn"),
+  citeModal: $("citeModal"),
+  citeClose: $("citeClose"),
+  citeStatus: $("citeStatus"),
+  citeTitleInput: $("citeTitleInput"),
+  citeAuthorsInput: $("citeAuthorsInput"),
+  citeYearInput: $("citeYearInput"),
+  citeVenueInput: $("citeVenueInput"),
+  citeDoiInput: $("citeDoiInput"),
+  citeFormatSel: $("citeFormatSel"),
+  citeOutput: $("citeOutput"),
+  citeCopyBtn: $("citeCopyBtn"),
   // 导出页
   exportPage: $("exportPage"),
   exportBack: $("exportBack"),
@@ -706,6 +757,21 @@ function applyStaticI18n() {
   setAttr("#commentList", "aria-label", t("commentListAria"));
   setText("#readerExportBtn", t("readerExportBtn"));
   setAttr("#readerExportBtn", "title", t("readerExportTitle"));
+  // 引用 / Cite
+  setText("#readerCiteBtn", t("citeBtn"));
+  setAttr("#readerCiteBtn", "title", t("citeBtnTitle"));
+  setText("#citeTitle", t("citeTitle"));
+  setAttr("#citeClose", "aria-label", t("citeCloseAria"));
+  setText("#citeMetaHead", t("citeMetaHead"));
+  setText("#citeLblTitle", t("citeFieldTitle"));
+  setText("#citeLblAuthors", t("citeFieldAuthors"));
+  setText("#citeLblYear", t("citeFieldYear"));
+  setText("#citeLblVenue", t("citeFieldVenue"));
+  setText("#citeLblDoi", t("citeFieldDoi"));
+  setAttr("#citeAuthorsInput", "placeholder", t("citeAuthorsPlaceholder"));
+  setText("#citeFormatHead", t("citeFormatHead"));
+  setText("#citeOutputHead", t("citeOutputHead"));
+  if (!_citeCopiedFlash) setText("#citeCopyBtn", t("citeCopyBtn"));
   // 导出页
   setAttr("#exportBack", "aria-label", t("exportBackAria"));
   setAttr("#exportBack", "title", t("exportBackAria"));
@@ -1001,6 +1067,374 @@ async function extractAllText(onProgress) {
     onProgress?.(i, state.totalPages);
   }
   state.pdfText = chunks.join("\n\n");
+}
+
+// ══════════════════════ 引用 / Cite ══════════════════════
+// 阅读器右栏「引用」按钮 → 打开 cite modal：可编辑元数据 + 三格式实时生成 + 一键复制。
+// 元数据来源：① metadata store 缓存（pdfKey → paper 记录）② Semantic Scholar API 抓取
+// ③ 用户手填。抓取失败优雅降级（字段留空）。所有改动按 pdfKey 持久化进 metadata store。
+const CITE_META_PREFIX = "paper:";              // metadata store key 前缀
+let _citeCurrentFmt = "apa";
+let _citeMeta = null;                            // { title, authors:[], year, venue, doi, arxivId }
+let _citeFetchedKey = null;                      // 已抓过的 pdfKey（防重复抓）
+let _citeCopiedFlash = false;                    // 复制按钮「已复制」闪烁态
+
+// 从 pdfKey 提取 arXiv ID（url:https://arxiv.org/abs/2412.13678 → 2412.13678）
+function citeArxivIdFromKey(pdfKey) {
+  if (!pdfKey || !pdfKey.startsWith("url:")) return "";
+  const m = pdfKey.slice(4).match(/arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]{4,5})(?:v\d+)?/i);
+  return m ? m[1] : "";
+}
+
+// 扫已抽取的 PDF 全文找 DOI
+function citeDoiFromText(text) {
+  if (!text) return "";
+  const m = text.match(/10\.\d{4,}\/[^\s"<>]+/);
+  // 去掉尾部标点（DOI 后常跟句号/括号）
+  return m ? m[0].replace(/[.,;)\]]+$/, "") : "";
+}
+
+// HTML entity 解码（Crossref / S2 偶尔在 venue / title 里塞 `&amp;` / `&quot;`）
+function citeDecodeEntities(s) {
+  if (!s || typeof s !== "string") return s;
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+// 通用 JSON fetch + 超时；失败返回 null（不抛错）
+async function citeFetchJSON(url, timeoutMs = 8000) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const resp = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch (_) {
+    return null; // 网络断 / CORS / 超时 / 限流 → 优雅降级
+  }
+}
+
+// Semantic Scholar 返回 → 统一 meta 对象
+function citeNormalizeS2(data) {
+  if (!data) return null;
+  const ext = data.externalIds || {};
+  return {
+    title: citeDecodeEntities(data.title || ""),
+    authors: (data.authors || []).map((a) => a.name).filter(Boolean),
+    year: data.year ? String(data.year) : "",
+    venue: citeDecodeEntities(data.venue || ""),
+    doi: ext.DOI || "",
+    arxivId: ext.ArXiv || "",
+  };
+}
+
+// Crossref 返回 → 统一 meta 对象（DOI 注册局，对主流出版商几乎 100% 命中）
+function citeNormalizeCrossref(payload, doi) {
+  const m = payload && payload.message;
+  if (!m) return null;
+  // 作者：优先 given+family（出版商 deposit 的原文），机构作者退回 name/literal
+  const authors = (m.author || [])
+    .map((a) => {
+      if (a.family || a.given) return [a.given, a.family].filter(Boolean).join(" ");
+      return a.name || a.literal || "";
+    })
+    .filter(Boolean);
+  // 年份：issued > published-print > published-online > created
+  const issued = m.issued || m["published-print"] || m["published-online"] || m.created;
+  const year = issued && issued["date-parts"] && issued["date-parts"][0]
+    ? String(issued["date-parts"][0][0] || "") : "";
+  return {
+    title: citeDecodeEntities((m.title || [])[0] || ""),
+    authors,
+    year,
+    venue: citeDecodeEntities((m["container-title"] || [])[0] || ""),
+    doi: m.DOI || doi || "",
+    arxivId: "",
+  };
+}
+
+// 抓取元数据：
+//   arXiv 论文 → Semantic Scholar（对 arXiv 覆盖好）
+//   DOI 论文   → Crossref 主源（出版商原数据） + S2 兜底
+// 失败返回 null（modal 会保持字段为空，让用户手填）。
+async function citeFetchMeta(arxivId, doi) {
+  if (arxivId) {
+    const fields = "fields=title,authors,year,venue,externalIds";
+    return citeNormalizeS2(await citeFetchJSON(
+      `https://api.semanticscholar.org/graph/v1/paper/arXiv:${encodeURIComponent(arxivId)}?${fields}`
+    ));
+  }
+  if (!doi) return null;
+  // Crossref 命中即返回，省下打 S2 的限流配额；只在主源失败时才兜底
+  const cr = citeNormalizeCrossref(
+    await citeFetchJSON(`https://api.crossref.org/works/${encodeURIComponent(doi)}`),
+    doi,
+  );
+  if (cr && cr.title) return cr;
+  const fields = "fields=title,authors,year,venue,externalIds";
+  return citeNormalizeS2(await citeFetchJSON(
+    `https://api.semanticscholar.org/graph/v1/paper/DOI:${encodeURIComponent(doi)}?${fields}`
+  ));
+}
+
+// 持久化：按 pdfKey 存进 metadata store（key = "paper:<pdfKey>"）
+function citePersist(pdfKey, meta) {
+  if (!pdfKey || !meta) return;
+  writeMeta(CITE_META_PREFIX + pdfKey, meta).catch((e) => console.warn("[citePersist]", e));
+}
+
+// ── 格式化函数（纯函数：meta → string）──
+// meta = { title, authors:[string], year, venue, doi, arxivId }
+
+// 把作者名拆成 { last, given }（given 是名，可能多段）
+function citeSplitName(full) {
+  const s = (full || "").trim();
+  if (!s) return null;
+  if (s.includes(",")) {
+    // "Lastname, First M." 形式
+    const [last, rest] = s.split(",");
+    return { last: last.trim(), given: (rest || "").trim() };
+  }
+  const parts = s.split(/\s+/);
+  if (parts.length === 1) return { last: parts[0], given: "" };
+  return { last: parts[parts.length - 1], given: parts.slice(0, -1).join(" ") };
+}
+
+// 名 → 首字母缩写："John Michael" → "J. M."
+function citeInitials(given) {
+  return (given || "")
+    .split(/[\s.]+/)
+    .filter(Boolean)
+    .map((p) => p[0].toUpperCase() + ".")
+    .join(" ");
+}
+
+// APA 7th
+function citeFormatAPA(meta) {
+  const names = (meta.authors || []).map(citeSplitName).filter(Boolean);
+  let authorStr = "";
+  if (names.length) {
+    const fmt = (n) => {
+      const ini = citeInitials(n.given);
+      return ini ? `${n.last}, ${ini}` : n.last;
+    };
+    if (names.length === 1) authorStr = fmt(names[0]);
+    else if (names.length <= 20) {
+      authorStr = names.slice(0, -1).map(fmt).join(", ") + ", & " + fmt(names[names.length - 1]);
+    } else {
+      authorStr = names.slice(0, 19).map(fmt).join(", ") + ", ... " + fmt(names[names.length - 1]);
+    }
+  }
+  const year = meta.year ? `(${meta.year}).` : "(n.d.).";
+  const title = meta.title ? `${meta.title}.` : "";
+  let tail;
+  if (meta.arxivId) {
+    tail = `arXiv. https://arxiv.org/abs/${meta.arxivId}`;
+  } else if (meta.venue) {
+    tail = `${meta.venue}.`;
+    if (meta.doi) tail += ` https://doi.org/${meta.doi}`;
+  } else if (meta.doi) {
+    tail = `https://doi.org/${meta.doi}`;
+  } else {
+    tail = "";
+  }
+  // 作者块末尾若已是缩写点（"D."）则不再叠加句点，避免 "D.."
+  const authorBlock = authorStr ? (/\.$/.test(authorStr) ? authorStr : authorStr + ".") : "";
+  return [authorBlock, year, title, tail].filter(Boolean).join(" ").trim();
+}
+
+// GB/T 7714-2015（期刊论文 [J]；超 3 位作者用「等 / et al.」）
+function citeFormatGBT(meta) {
+  const names = (meta.authors || []).map(citeSplitName).filter(Boolean);
+  // GB/T：姓在前名在后，姓全大写不强制；这里用「姓 名首字母」近似（兼容中英文名）
+  const fmtName = (raw, n) => {
+    // 中文名（无空格、非 ASCII）直接用原文
+    if (/[^\x00-\x7f]/.test(raw) && !raw.includes(" ")) return raw;
+    const ini = citeInitials(n.given);
+    return ini ? `${n.last} ${ini.replace(/\./g, "")}` : n.last;
+  };
+  const rawAuthors = meta.authors || [];
+  let authorStr = "";
+  if (rawAuthors.length) {
+    const elided = rawAuthors.length > 3 ? rawAuthors.slice(0, 3) : rawAuthors;
+    authorStr = elided
+      .map((raw, i) => fmtName(raw, names[i]))
+      .join(", ");
+    if (rawAuthors.length > 3) {
+      authorStr += /[^\x00-\x7f]/.test(rawAuthors[0]) ? ", 等" : ", et al";
+    }
+  }
+  const parts = [];
+  if (authorStr) parts.push(authorStr + ".");
+  if (meta.title) parts.push(`${meta.title}[J].`);
+  let venueYear = "";
+  if (meta.venue && meta.year) venueYear = `${meta.venue}, ${meta.year}.`;
+  else if (meta.venue) venueYear = `${meta.venue}.`;
+  else if (meta.year) venueYear = `${meta.year}.`;
+  if (venueYear) parts.push(venueYear);
+  if (meta.arxivId) parts.push(`arXiv:${meta.arxivId}.`);
+  else if (meta.doi) parts.push(`DOI: ${meta.doi}.`);
+  return parts.join(" ").trim();
+}
+
+// 生成 BibTeX cite key：firstauthorlast + year + 标题首词
+function citeBibKey(meta) {
+  const names = (meta.authors || []).map(citeSplitName).filter(Boolean);
+  let first = names.length ? names[0].last : "anon";
+  first = first.toLowerCase().replace(/[^a-z0-9]/g, "") || "anon";
+  const year = meta.year || "nd";
+  const word = (meta.title || "")
+    .split(/\s+/)
+    .map((w) => w.toLowerCase().replace(/[^a-z0-9]/g, ""))
+    .filter((w) => w && w.length > 3)[0] || "";
+  return first + year + word;
+}
+
+// BibTeX（arXiv 用 @misc + eprint/archivePrefix；否则 @article）
+function citeFormatBibTeX(meta) {
+  const key = citeBibKey(meta);
+  const authorField = (meta.authors || []).join(" and ");
+  const lines = [];
+  const F = (k, v) => { if (v) lines.push(`  ${k} = {${v}}`); };
+  if (meta.arxivId) {
+    F("title", meta.title);
+    F("author", authorField);
+    F("year", meta.year);
+    F("eprint", meta.arxivId);
+    lines.push(`  archivePrefix = {arXiv}`);
+    if (meta.venue) F("note", meta.venue);
+    return `@misc{${key},\n${lines.join(",\n")}\n}`;
+  }
+  F("title", meta.title);
+  F("author", authorField);
+  F("year", meta.year);
+  F("journal", meta.venue);
+  F("doi", meta.doi);
+  return `@article{${key},\n${lines.join(",\n")}\n}`;
+}
+
+function citeFormat(meta, fmt) {
+  if (!meta) return "";
+  if (fmt === "gbt") return citeFormatGBT(meta);
+  if (fmt === "bibtex") return citeFormatBibTeX(meta);
+  return citeFormatAPA(meta);
+}
+
+// 从输入框收集当前 meta（authors 用 ; 或 , 拆分）
+function citeReadInputs() {
+  const authorsRaw = els.citeAuthorsInput.value.trim();
+  return {
+    title: els.citeTitleInput.value.trim(),
+    authors: authorsRaw ? authorsRaw.split(/\s*[;,]\s*/).filter(Boolean) : [],
+    year: els.citeYearInput.value.trim(),
+    venue: els.citeVenueInput.value.trim(),
+    doi: els.citeDoiInput.value.trim(),
+    arxivId: (_citeMeta && _citeMeta.arxivId) || "",
+  };
+}
+
+// 把 meta 灌进输入框
+function citeFillInputs(meta) {
+  els.citeTitleInput.value = meta.title || "";
+  els.citeAuthorsInput.value = (meta.authors || []).join("; ");
+  els.citeYearInput.value = meta.year || "";
+  els.citeVenueInput.value = meta.venue || "";
+  // DOI 框：arXiv 论文优先显示 arXiv ID
+  els.citeDoiInput.value = meta.arxivId ? `arXiv:${meta.arxivId}` : (meta.doi || "");
+}
+
+// 重新渲染引用文本输出
+function citeRenderOutput() {
+  const meta = citeReadInputs();
+  const out = citeFormat(meta, _citeCurrentFmt);
+  els.citeOutput.textContent = out || t("citeEmptyHint");
+}
+
+function citeSetStatus(msg) {
+  if (!msg) { els.citeStatus.hidden = true; return; }
+  els.citeStatus.hidden = false;
+  els.citeStatus.textContent = msg;
+}
+
+// 打开 cite modal：加载缓存 / 首次抓取
+async function openCiteModal() {
+  if (!state.pdfKey) return;
+  const pdfKey = state.pdfKey;
+  els.citeModal.hidden = false;
+  citeSetStatus("");
+  track("cite_open", {});
+
+  // 1. 先读 metadata store 缓存
+  let cached = null;
+  try { cached = await readMeta(CITE_META_PREFIX + pdfKey); } catch (_) {}
+  if (cached) {
+    _citeMeta = cached;
+    citeFillInputs(cached);
+    citeRenderOutput();
+    return;
+  }
+
+  // 2. 无缓存：用标题兜底先填一个，再尝试抓取
+  const arxivId = citeArxivIdFromKey(pdfKey);
+  const doi = arxivId ? "" : citeDoiFromText(state.pdfText);
+  _citeMeta = {
+    title: state.pdfTitle && !/\.pdf$/i.test(state.pdfTitle) ? state.pdfTitle : "",
+    authors: [], year: "", venue: "", doi: doi, arxivId: arxivId,
+  };
+  citeFillInputs(_citeMeta);
+  citeRenderOutput();
+
+  // 3. 抓取（只抓一次）
+  if (_citeFetchedKey === pdfKey) return;
+  if (!arxivId && !doi) {
+    citeSetStatus(t("citeFetchFailed"));
+    return;
+  }
+  citeSetStatus(t("citeFetching"));
+  const fetched = await citeFetchMeta(arxivId, doi);
+  // 抓取期间用户可能已关 modal / 切论文 —— 校验后再写
+  if (state.pdfKey !== pdfKey) return;
+  _citeFetchedKey = pdfKey;
+  if (fetched) {
+    // 抓到的字段优先；保留本地已识别的 arxivId/doi
+    _citeMeta = {
+      title: fetched.title || _citeMeta.title,
+      authors: fetched.authors && fetched.authors.length ? fetched.authors : _citeMeta.authors,
+      year: fetched.year || _citeMeta.year,
+      venue: fetched.venue || _citeMeta.venue,
+      doi: fetched.doi || _citeMeta.doi,
+      arxivId: fetched.arxivId || _citeMeta.arxivId,
+    };
+    citeFillInputs(_citeMeta);
+    citeRenderOutput();
+    citeSetStatus("");
+    citePersist(pdfKey, _citeMeta);
+  } else {
+    citeSetStatus(t("citeFetchFailed"));
+  }
+}
+
+function closeCiteModal() {
+  els.citeModal.hidden = true;
+}
+
+// 用户编辑输入框 → 实时更新输出 + 持久化
+function citeOnInput() {
+  // DOI 框可能填 "arXiv:xxxx"，解析回 arxivId
+  const doiVal = els.citeDoiInput.value.trim();
+  const am = doiVal.match(/arxiv:\s*([0-9]{4}\.[0-9]{4,5})/i);
+  if (am) {
+    _citeMeta = { ..._citeMeta, arxivId: am[1], doi: "" };
+  } else {
+    _citeMeta = { ..._citeMeta, arxivId: "", doi: doiVal };
+  }
+  citeRenderOutput();
+  if (state.pdfKey) citePersist(state.pdfKey, citeReadInputs());
 }
 
 // ────────────────────── 搜索 (PDFFindController) ──────────────────────
@@ -1785,6 +2219,22 @@ const EXAMPLE_RECENT_TITLE = "Clio 论文（点开看 co-read 怎么用）";
 const EXAMPLE_SEED =
   {
     "pdfKey": "url:https://arxiv.org/abs/2412.13678",
+    // 引用元数据：预烤进去，示例论文的「引用」面板秒开、不依赖网络
+    "paperMeta": {
+      "title": "Clio: Privacy-Preserving Insights into Real-World AI Use",
+      "authors": [
+        "Alex Tamkin", "Miles McCain", "Kunal Handa", "Esin Durmus",
+        "Liane Lovitt", "Ankur Rathi", "Saffron Huang", "Alfred Mountfield",
+        "Jerry Hong", "Stuart Ritchie", "Michael Stern", "Brian Clarke",
+        "Landon Goldberg", "Theodore R. Sumers", "Jared Mueller",
+        "William McEachen", "Wes Mitchell", "Shan Carter", "Jack Clark",
+        "Jared Kaplan", "Deep Ganguli"
+      ],
+      "year": "2024",
+      "venue": "arXiv preprint",
+      "doi": "",
+      "arxivId": "2412.13678"
+    },
     "topic": {
       "id": "default",
       "name": "示例主题",
@@ -2258,6 +2708,10 @@ async function seedExampleData() {
     const seed = EXAMPLE_SEED;
     await saveTopic(seed.topic);
     await saveAnnotations(seed.pdfKey, seed.annotations);
+    // 预烤引用元数据进 metadata store —— 示例论文的「引用」面板秒开、不依赖网络
+    if (seed.paperMeta) {
+      await writeMeta(CITE_META_PREFIX + seed.pdfKey, seed.paperMeta);
+    }
     for (const th of seed.threads) {
       // threads store keyPath=id；直接 put 整条记录（含 topicId / pdfKey / messages）
       await new Promise((resolve) => {
@@ -5373,6 +5827,50 @@ document.addEventListener("mousedown", (e) => {
   if (!els.viewerContainer.contains(e.target)) hideColorPalette();
 });
 
+// ══════ 引用 / Cite 事件绑定 ══════
+els.readerCiteBtn.addEventListener("click", () => { openCiteModal(); });
+els.citeClose.addEventListener("click", closeCiteModal);
+els.citeModal.addEventListener("click", (e) => {
+  if (e.target === els.citeModal) closeCiteModal();
+});
+for (const inp of [els.citeTitleInput, els.citeAuthorsInput, els.citeYearInput,
+                    els.citeVenueInput, els.citeDoiInput]) {
+  inp.addEventListener("input", citeOnInput);
+}
+els.citeFormatSel.addEventListener("click", (e) => {
+  const btn = e.target.closest(".cite-fmt-btn");
+  if (!btn) return;
+  _citeCurrentFmt = btn.dataset.fmt;
+  els.citeFormatSel.querySelectorAll(".cite-fmt-btn").forEach((b) => {
+    const on = b === btn;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+  citeRenderOutput();
+});
+els.citeCopyBtn.addEventListener("click", async () => {
+  const text = els.citeOutput.textContent || "";
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    // 剪贴板 API 不可用（非 HTTPS / 权限）→ 退回 execCommand
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (_) {}
+    ta.remove();
+  }
+  track("cite_copy", { fmt: _citeCurrentFmt });
+  _citeCopiedFlash = true;
+  els.citeCopyBtn.textContent = t("citeCopiedBtn");
+  setTimeout(() => {
+    _citeCopiedFlash = false;
+    els.citeCopyBtn.textContent = t("citeCopyBtn");
+  }, 1500);
+});
+
 // ══════ v6 划线浮出 comment 框 事件绑定 ══════
 els.cmtComposeSend.addEventListener("click", submitCmtCompose);
 els.cmtComposeInput.addEventListener("input", () => autoGrow(els.cmtComposeInput));
@@ -5517,6 +6015,7 @@ els.ntmConfirm.addEventListener("click", ntmDoCreate);
 // ESC 关 modal / "..." 菜单
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  if (!els.citeModal.hidden) { closeCiteModal(); return; }
   if (!els.newTopicModal.hidden) { closeNewTopicModal(); return; }
   if (!els.topicCardMenu.hidden) { hideTopicCardMenu(); return; }
 });

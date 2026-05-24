@@ -279,6 +279,7 @@ html, body {
   border-radius: 6px;
   padding: 2px 4px;
   position: relative;   /* 给 zoomMenu 绝对定位锚点 */
+  flex-shrink: 0;       /* toolbar 拥挤时不压缩自己，由 .pdf-title 承担 ellipsis */
 }
 .pdf-toolbar .zoom-bar button {
   font-size: 14px;
@@ -524,6 +525,7 @@ html, body {
   border-radius: 6px;
   padding: 2px 4px;
   min-width: 200px;
+  flex-shrink: 0;       /* toolbar 拥挤时不压缩搜索框；标题区会 ellipsis */
 }
 .find-bar input {
   border: none;
@@ -651,6 +653,89 @@ html, body {
 }
 .cmt-export-btn:hover { filter: brightness(1.2); }
 .cmt-export-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 引用按钮 —— 描边款，和实心导出按钮区分 */
+.cmt-cite-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.cmt-cite-btn:hover { background: var(--bg); }
+.cmt-cite-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── 引用 / Cite modal ── */
+.cite-section { margin-bottom: 20px; }
+.cite-section:last-child { margin-bottom: 0; }
+.cite-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+}
+.cite-status {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 14px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border-radius: 6px;
+}
+.cite-status[hidden] { display: none; }
+.cite-fields { display: flex; flex-direction: column; gap: 12px; }
+.cite-field { display: flex; flex-direction: column; gap: 4px; }
+.cite-field-row { display: flex; gap: 12px; }
+.cite-field-sm { width: 90px; flex-shrink: 0; }
+.cite-field-grow { flex: 1; min-width: 0; }
+.cite-label { font-size: 12px; color: var(--ink-soft); }
+.cite-field input {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.cite-field input:focus { outline: none; border-color: var(--ink); }
+.cite-format-sel { display: flex; gap: 8px; flex-wrap: wrap; }
+.cite-fmt-btn {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.cite-fmt-btn:hover { border-color: var(--ink-soft); }
+.cite-fmt-btn.active {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+.cite-output {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  margin: 0;
+  min-height: 48px;
+}
 
 .comment-list {
   flex: 1;
