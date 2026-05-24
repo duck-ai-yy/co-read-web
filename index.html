@@ -121,6 +121,62 @@
     </div>
   </div>
 
+  <!-- 引用 / Cite modal：可编辑元数据 + 格式选择 + 实时生成 + 一键复制 -->
+  <div id="citeModal" class="modal-mask" hidden role="dialog" aria-modal="true" aria-labelledby="citeTitle">
+    <div class="modal">
+      <header class="modal-header">
+        <h3 id="citeTitle">引用本文</h3>
+        <button id="citeClose" type="button" class="ghost" aria-label="关闭">×</button>
+      </header>
+      <div class="modal-body">
+        <p id="citeStatus" class="cite-status" hidden></p>
+        <section class="cite-section">
+          <h4 class="cite-head" id="citeMetaHead">元数据（可编辑）</h4>
+          <div class="cite-fields">
+            <label class="cite-field">
+              <span class="cite-label" id="citeLblTitle">标题</span>
+              <input type="text" id="citeTitleInput" autocomplete="off" />
+            </label>
+            <label class="cite-field">
+              <span class="cite-label" id="citeLblAuthors">作者</span>
+              <input type="text" id="citeAuthorsInput" autocomplete="off" placeholder="多位作者用分号或逗号分隔" />
+            </label>
+            <div class="cite-field-row">
+              <label class="cite-field cite-field-sm">
+                <span class="cite-label" id="citeLblYear">年份</span>
+                <input type="text" id="citeYearInput" autocomplete="off" inputmode="numeric" />
+              </label>
+              <label class="cite-field cite-field-grow">
+                <span class="cite-label" id="citeLblVenue">出处 / 期刊</span>
+                <input type="text" id="citeVenueInput" autocomplete="off" />
+              </label>
+            </div>
+            <label class="cite-field">
+              <span class="cite-label" id="citeLblDoi">DOI / arXiv ID</span>
+              <input type="text" id="citeDoiInput" autocomplete="off" />
+            </label>
+          </div>
+        </section>
+        <section class="cite-section">
+          <h4 class="cite-head" id="citeFormatHead">引用格式</h4>
+          <div id="citeFormatSel" class="cite-format-sel" role="radiogroup">
+            <button type="button" class="cite-fmt-btn active" data-fmt="apa" role="radio" aria-checked="true">APA 7th</button>
+            <button type="button" class="cite-fmt-btn" data-fmt="gbt" role="radio" aria-checked="false">GB/T 7714</button>
+            <button type="button" class="cite-fmt-btn" data-fmt="bibtex" role="radio" aria-checked="false">BibTeX</button>
+          </div>
+        </section>
+        <section class="cite-section">
+          <h4 class="cite-head" id="citeOutputHead">引用文本</h4>
+          <pre id="citeOutput" class="cite-output"></pre>
+        </section>
+      </div>
+      <footer class="modal-footer">
+        <span class="toolbar-spacer"></span>
+        <button id="citeCopyBtn" type="button" class="primary-btn">复制</button>
+      </footer>
+    </div>
+  </div>
+
   <!-- 主题卡片菜单（重命名/删除）-->
   <div id="topicCardMenu" class="card-menu" hidden role="menu">
     <button type="button" data-action="rename" role="menuitem">重命名</button>
@@ -206,6 +262,7 @@
     <div class="reader-right">
       <header class="cmt-header">
         <span id="cmtSummary" class="cmt-summary">准备中…</span>
+        <button id="readerCiteBtn" type="button" class="cmt-cite-btn" title="生成本篇论文的引用">引用</button>
         <button id="readerExportBtn" type="button" class="cmt-export-btn" title="把本篇收入笔记的内容导出为 markdown">导出笔记 ↓</button>
       </header>
       <div id="commentList" class="comment-list" role="list" aria-label="comment 列表"></div>
