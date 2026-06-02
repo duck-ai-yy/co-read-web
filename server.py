@@ -145,6 +145,51 @@ async def fetch_pdf(url: str):
         raise HTTPException(status_code=502, detail=f"PDF fetch failed: {e}")
 
 
+@app.get("/api/arxiv-meta")
+async def arxiv_meta(id: str):
+    """arxiv 官方 API 不允许跨域，后端代理 + 把 Atom XML 解析成 JSON 返回。
+    用作 cite 的权威源：Semantic Scholar 抓不到的论文，arxiv 自己有 100% 覆盖。"""
+    import re, xml.etree.ElementTree as ET
+    if not re.fullmatch(r"\d{4}\.\d{4,6}(v\d+)?", id):
+        raise HTTPException(status_code=400, detail="Invalid arxiv id")
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            r = await client.get(f"https://export.arxiv.org/api/query?id_list={id}")
+            r.raise_for_status()
+        root = ET.fromstring(r.text)
+        ns = {"a": "http://www.w3.org/2005/Atom", "arx": "http://arxiv.org/schemas/atom"}
+        entry = root.find("a:entry", ns)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="arxiv entry not found")
+        def txt(path, default=""):
+            el = entry.find(path, ns)
+            return (el.text or "").strip() if el is not None and el.text else default
+        title = " ".join(txt("a:title").split())
+        summary = " ".join(txt("a:summary").split())
+        published = txt("a:published")
+        year = published[:4] if published else ""
+        authors = [a.text.strip() for a in entry.findall("a:author/a:name", ns) if a.text]
+        doi = txt("arx:doi")
+        journal_ref = txt("arx:journal_ref")
+        primary = entry.find("arx:primary_category", ns)
+        primary_cat = primary.get("term") if primary is not None else ""
+        return {
+            "title": title,
+            "authors": authors,
+            "year": year,
+            "venue": journal_ref or "arXiv",
+            "doi": doi,
+            "arxivId": id,
+            "abstract": summary,
+            "primaryCategory": primary_cat,
+            "published": published,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"arxiv meta fetch failed: {e}")
+
+
 # 静态文件：通用 dispatcher，no-store 防止本地开发期浏览器缓存旧版
 # 同时给 index.html 里的 app.js / style.css 注入文件 mtime 做 cache-bust，
 # 这样换浏览器不会拿到老 module cache

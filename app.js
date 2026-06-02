@@ -1120,11 +1120,15 @@ let _citeMeta = null;                            // { title, authors:[], year, v
 let _citeFetchedKey = null;                      // 已抓过的 pdfKey（防重复抓）
 let _citeCopiedFlash = false;                    // 复制按钮「已复制」闪烁态
 
-// 从 pdfKey 提取 arXiv ID（url:https://arxiv.org/abs/2412.13678 → 2412.13678）
+// 从 pdfKey 提取 arXiv ID（兼容两种形态：url:https://arxiv.org/abs/2412.13678 和 arxiv:2412.13678）
 function citeArxivIdFromKey(pdfKey) {
-  if (!pdfKey || !pdfKey.startsWith("url:")) return "";
-  const m = pdfKey.slice(4).match(/arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]{4,5})(?:v\d+)?/i);
-  return m ? m[1] : "";
+  if (!pdfKey) return "";
+  if (pdfKey.startsWith("arxiv:")) return pdfKey.slice(6);
+  if (pdfKey.startsWith("url:")) {
+    const m = pdfKey.slice(4).match(/arxiv\.org\/(?:abs|html|pdf)\/(\d{4}\.\d{4,6})(?:v\d+)?/i);
+    return m ? m[1] : "";
+  }
+  return "";
 }
 
 // 扫已抽取的 PDF 全文找 DOI
@@ -1205,10 +1209,33 @@ function citeNormalizeCrossref(payload, doi) {
 // 失败返回 null（modal 会保持字段为空，让用户手填）。
 async function citeFetchMeta(arxivId, doi) {
   if (arxivId) {
+    // 双源 race + S2 优先（结构化好），S2 失败 / 字段空时用 arxiv 官方 API（100% 覆盖）兜底
     const fields = "fields=title,authors,year,venue,externalIds";
-    return citeNormalizeS2(await citeFetchJSON(
-      `https://api.semanticscholar.org/graph/v1/paper/arXiv:${encodeURIComponent(arxivId)}?${fields}`
-    ));
+    let s2 = null;
+    try {
+      s2 = citeNormalizeS2(await citeFetchJSON(
+        `https://api.semanticscholar.org/graph/v1/paper/arXiv:${encodeURIComponent(arxivId)}?${fields}`
+      ));
+    } catch (_) { /* fall through to arxiv */ }
+    // arxiv 官方源（后端代理）：拿 title/authors/year/journal_ref/doi/abstract
+    let ax = null;
+    try {
+      ax = await citeFetchJSON(`/api/arxiv-meta?id=${encodeURIComponent(arxivId)}`);
+    } catch (_) {}
+    if (!s2 && !ax) return null;
+    if (!s2) return ax;
+    if (!ax) return s2;
+    // 合并：S2 字段优先（更结构化），arxiv 字段填补空缺 + 提供 abstract
+    return {
+      title: s2.title || ax.title,
+      authors: (s2.authors && s2.authors.length) ? s2.authors : ax.authors,
+      year: s2.year || ax.year,
+      venue: s2.venue || ax.venue,
+      doi: s2.doi || ax.doi,
+      arxivId: s2.arxivId || ax.arxivId || arxivId,
+      abstract: ax.abstract || "",
+      published: ax.published || "",
+    };
   }
   if (!doi) return null;
   // Crossref 命中即返回，省下打 S2 的限流配额；只在主源失败时才兜底
@@ -2066,7 +2093,7 @@ async function loadCurrentTopic() {
 //        push 到 default.pdfKeys（去重），写回 topics
 //   幂等：migrationVersion >= 3 跳过
 const MIGRATION_VERSION_KEY = "migrationVersion";
-const CURRENT_MIGRATION_VERSION = 4;
+const CURRENT_MIGRATION_VERSION = 5;
 
 // v4 脏 annotation 判定阈值（百分比坐标体系下）
 // - 单页 rect 数 > 50：通常是 Cmd+A 全选 / textLayer 异常吞下整段
@@ -2123,6 +2150,52 @@ async function autoMigrateAnnotationsToDefault() {
   } catch (e) {
     // 迁移失败不阻塞启动；下次启动会再试（idempotent）
     console.warn("[autoMigrateAnnotationsToDefault]", e);
+  }
+}
+
+// v5 migration: 把所有 topic 里污染的 arxiv:2412.13678 key 换回 url:... 旧形态。
+// 起因：derivePdfKey 改 schema 后用户 Chrome 已经把示例论文存成 arxiv: 形态，
+// 跟 EXAMPLE_SEED 的 url: 不匹配 → home 不显示"Clio 论文"友好名 + 笔记看不到。
+// 现在 derivePdfKey 已钉死示例 URL 走 url: 旧形态，这个 migration 把旧污染清掉。
+async function migrateExampleKeyBack() {
+  const OLD = "arxiv:2412.13678";
+  const NEW = "url:https://arxiv.org/abs/2412.13678";
+  try {
+    const db = await openIdb();
+    const TOPICS_STORE = "topics";
+    if (!db.objectStoreNames.contains(TOPICS_STORE)) return;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(TOPICS_STORE, "readwrite");
+      const store = tx.objectStore(TOPICS_STORE);
+      const req = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (!cursor) { resolve(); return; }
+        const topic = cursor.value || {};
+        let changed = false;
+        if (Array.isArray(topic.pdfKeys) && topic.pdfKeys.includes(OLD)) {
+          // 替换 OLD 为 NEW，去重（NEW 可能本就在 = seed 还没被删）
+          topic.pdfKeys = [...new Set(topic.pdfKeys.map((k) => (k === OLD ? NEW : k)))];
+          changed = true;
+        }
+        if (topic.pdfTitles && topic.pdfTitles[OLD]) {
+          topic.pdfTitles[NEW] = topic.pdfTitles[NEW] || topic.pdfTitles[OLD];
+          delete topic.pdfTitles[OLD];
+          changed = true;
+        }
+        if (topic.pdfMetas && topic.pdfMetas[OLD]) {
+          topic.pdfMetas[NEW] = { ...(topic.pdfMetas[NEW] || {}), ...topic.pdfMetas[OLD] };
+          delete topic.pdfMetas[OLD];
+          changed = true;
+        }
+        if (changed) cursor.update(topic);
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    console.warn("[migrateExampleKeyBack]", e);
   }
 }
 
@@ -2796,6 +2869,9 @@ async function runMigrations() {
     }
     if (ver < 4) {
       await cleanDirtyAnnotations();
+    }
+    if (ver < 5) {
+      await migrateExampleKeyBack();
     }
     await writeMeta(MIGRATION_VERSION_KEY, CURRENT_MIGRATION_VERSION);
   } catch (e) {
@@ -3943,7 +4019,10 @@ function renderHomeRecent() {
     const topic = state.topics[tid];
     if (!topic) continue;
     for (const k of (topic.pdfKeys || [])) {
-      if (k.startsWith("url:")) items.push({ pdfKey: k, topicId: tid, topicName: displayTopicName(topic) });
+      // url:、arxiv: 都是远程论文（可重新加载），file: 是本地文件不能重开
+      if (k.startsWith("url:") || k.startsWith("arxiv:")) {
+        items.push({ pdfKey: k, topicId: tid, topicName: displayTopicName(topic) });
+      }
     }
   }
   if (items.length === 0) return;   // 没读过 → 不渲染（首页保持干净）
