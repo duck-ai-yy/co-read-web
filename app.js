@@ -490,7 +490,7 @@ window.__coread = state;
 // v6 comment 模型调试入口（test / console 用；app.js 是 module，函数不在全局）
 window.__coreadGetComments = () => getComments();
 window.__coreadExportCurrent = (group) => generateCurrentPdfMarkdown(group);
-window.__coreadExportTopic = (id, group) => generateMarkdownExport(id || state.currentTopicId, group);
+window.__coreadExportTopic = (id, group) => generateTopicMarkdownFiles(id || state.currentTopicId, group);
 // v3-γ caching debug log 开关（默认开；console 里 `window.__coreadCachingDebug = false` 关掉）
 if (window.__coreadCachingDebug === undefined) window.__coreadCachingDebug = true;
 // v3-α: 暴露主题数据层 helper，后续 PR（主题列表 UI / 色板编辑器）会用
@@ -4602,8 +4602,11 @@ function msgContent(m) {
 // 文件名安全化：替换 windows / unix 不合法字符为 -
 // 主题名含 "测试/X" → "测试-X"
 function _safeFileName(name) {
+  // 关键：替换 "." 为 "-"。否则像 "2412.13678" 这样的 arxiv ID 拼上时间戳后变成
+  // "2412.13678-20260602.md" —— macOS Finder 把 ".13678-..." 当成未知扩展名、
+  // 隐藏真正的 .md 后缀，用户感觉文件"没后缀打不开"。
   return (name || t("unnamedTopic"))
-    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/[\\/:*?"<>|.]/g, "-")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 60) || t("unnamedTopic");
@@ -4627,7 +4630,8 @@ function _exportMsgLines(messages) {
     const role = m.role === "user" ? t("mdRoleUser") : t("mdRoleAgent");
     const content = (m.role === "user" ? _stripPageTag(msgContent(m)) : msgContent(m)).trim();
     if (!content) continue;
-    out.push(`${role}${LANG === "en" ? ": " : "："}${content}`, "");
+    // main 全文导读不在 blockquote 里，直接平铺加粗角色
+    out.push(`**${role}**${LANG === "en" ? ": " : "："}${content}`, "");
   }
   return out;
 }
@@ -4637,12 +4641,25 @@ function isAnnIncluded(ann) {
   return !!ann && ann.includedInNote !== false;
 }
 
-// 一条 annotation 的导出行（原文引用 + 收入的消息）
+// 一条 annotation 的导出行：整块包进 blockquote，模拟预览页 L2/L3 层级缩进
+// （quote 是 block 的"锚"，下面 @AI 对话视觉上从属于这条 quote）
 function _exportCommentLines(ann, getThread) {
   const out = [];
   const quote = (ann.text || "").replace(/\s+/g, " ").trim();
-  out.push(`> "${quote}" — ${annPageLabel(ann)}`, "");
-  out.push(..._exportMsgLines((getThread(ann.id) || {}).messages));
+  out.push(`> "${quote}" — ${annPageLabel(ann)}`);
+  const msgs = (getThread(ann.id) || {}).messages || [];
+  for (const m of msgs) {
+    if (!isMsgIncluded(m)) continue;
+    const role = m.role === "user" ? t("mdRoleUser") : t("mdRoleAgent");
+    const content = (m.role === "user" ? _stripPageTag(msgContent(m)) : msgContent(m)).trim();
+    if (!content) continue;
+    out.push(">");
+    // 多行内容每行前缀 "> " 才能保持在同一 blockquote 内
+    const lines = content.split("\n");
+    out.push(`> **${role}**${LANG === "en" ? ": " : "："}${lines[0]}`);
+    for (let i = 1; i < lines.length; i++) out.push(`> ${lines[i]}`);
+  }
+  out.push("");  // 与下一条 ann 之间留空行 → markdown 视觉上分块
   return out;
 }
 
@@ -4701,22 +4718,18 @@ function _exportHeader(title, sub, palette) {
   return lines;
 }
 
-// 导出整个主题（主题页底部按钮）—— 从 IDB 逐篇读
-//   groupMode: "tag" / "reading"
-async function generateMarkdownExport(topicId, groupMode = "tag") {
+// 导出整个主题：返回 [{name, text}]，每篇论文一个独立 .md
+// 上层调用方把数组打包成 zip 给用户。
+async function generateTopicMarkdownFiles(topicId, groupMode = "tag") {
   const topic = state.topics[topicId];
   if (!topic) throw new Error(t("errTopicNotExist"));
   const pdfKeys = topic.pdfKeys || [];
   const palette = topic.palette || [];
   const subGroup = groupMode === "reading" ? t("mdGroupReading") : t("mdGroupTag");
-  const lines = _exportHeader(t("mdTopicNoteTitle", displayTopicName(topic)), t("mdSubGroupBody", subGroup), palette);
-  if (pdfKeys.length === 0) {
-    lines.push(t("mdTopicNoPdf"));
-    return lines.join("\n");
-  }
+  const files = [];
+  const seen = new Map();  // 文件名去重（同名加 -2 / -3 后缀）
   for (const pdfKey of pdfKeys) {
-    lines.push(`## 📄 ${deriveTitleFromPdfKey(pdfKey)}`, "");
-    // 当前在读那一篇：用内存 state（反映屏幕上最新勾选）；其余篇：从 IDB 读
+    const title = deriveTitleFromPdfKey(pdfKey);
     let anns, getThread;
     if (pdfKey === state.pdfKey) {
       anns = (state.annotations || []).filter((a) => !a.topicId || a.topicId === topicId);
@@ -4727,21 +4740,26 @@ async function generateMarkdownExport(topicId, groupMode = "tag") {
       try {
         anns = (await loadAnnotations(pdfKey) || []).filter((a) => !a.topicId || a.topicId === topicId);
       } catch (e) {
-        console.warn("[generateMarkdownExport] loadAnnotations", pdfKey, e);
-        lines.push(t("mdAnnReadFailed"), "");
+        console.warn("[generateTopicMarkdownFiles] loadAnnotations", pdfKey, e);
       }
       try {
         threadRecs = (await loadThreadsByPdfKey(pdfKey) || []).filter((t) => !t.topicId || t.topicId === topicId);
       } catch (e) {
-        console.warn("[generateMarkdownExport] loadThreadsByPdfKey", pdfKey, e);
+        console.warn("[generateTopicMarkdownFiles] loadThreadsByPdfKey", pdfKey, e);
       }
       const tmap = new Map(threadRecs.map((t) => [t.id, t]));
       getThread = (id) => tmap.get(id);
     }
+    const sub = `${t("mdSubTopicPrefix", displayTopicName(topic))}${t("mdSubGroupBody", subGroup)}`;
+    const lines = _exportHeader(t("mdNoteTitle", title), sub, palette);
     lines.push(...buildPdfNoteSection(anns, getThread, palette, groupMode));
-    lines.push("---", "");
+    const base = _safeFileName(title);
+    const dupCount = seen.get(base) || 0;
+    seen.set(base, dupCount + 1);
+    const fname = dupCount === 0 ? `${base}.md` : `${base}-${dupCount + 1}.md`;
+    files.push({ name: fname, text: lines.join("\n") });
   }
-  return lines.join("\n");
+  return files;
 }
 
 // 导出当前阅读的这一篇（reader 顶栏按钮）—— 直接用内存 state，反映屏幕上的最新勾选
@@ -4758,9 +4776,12 @@ function generateCurrentPdfMarkdown(groupMode = "tag") {
 
 // 触发浏览器下载一段文本为 .md 文件（topic / 当前篇导出共用）
 function _downloadBlob(text, fname) {
+  _triggerDownload(new Blob([text], { type: "text/markdown;charset=utf-8" }), fname);
+}
+
+function _triggerDownload(blob, fname) {
   let url = null;
   try {
-    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
     url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -4769,9 +4790,88 @@ function _downloadBlob(text, fname) {
     a.click();
     a.remove();
   } finally {
-    // 给浏览器一点时间触发下载，再 revoke
     if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+}
+
+// 零依赖 ZIP（store mode，不压缩）—— 避免再引外部 CDN lib。
+// 主题导出多篇笔记时打成 .zip 给用户，每篇 .md 一个条目，解压后直接拖进
+// Obsidian vault 就是一个文件夹。
+const _ZIP_CRC32_TABLE = (() => {
+  const tab = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    tab[n] = c >>> 0;
+  }
+  return tab;
+})();
+function _zipCrc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = _ZIP_CRC32_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+// files: [{ name: string, text: string }]  → Blob (application/zip)
+function _makeZipBlob(files) {
+  const enc = new TextEncoder();
+  const localParts = [];
+  const central = [];
+  let offset = 0;
+  for (const f of files) {
+    const nameBytes = enc.encode(f.name);
+    const data = enc.encode(f.text);
+    const crc = _zipCrc32(data);
+    const size = data.length;
+    // local file header (30 bytes + name)
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true);
+    lh.setUint16(4, 20, true);            // version
+    lh.setUint16(6, 0, true);             // flags
+    lh.setUint16(8, 0, true);             // method = 0 (stored)
+    lh.setUint16(10, 0, true);            // mod time
+    lh.setUint16(12, 0, true);            // mod date
+    lh.setUint32(14, crc, true);
+    lh.setUint32(18, size, true);         // compressed size = size (stored)
+    lh.setUint32(22, size, true);         // uncompressed size
+    lh.setUint16(26, nameBytes.length, true);
+    lh.setUint16(28, 0, true);            // extra len
+    localParts.push(new Uint8Array(lh.buffer), nameBytes, data);
+    // central directory entry (46 bytes + name)
+    const cd = new DataView(new ArrayBuffer(46));
+    cd.setUint32(0, 0x02014b50, true);
+    cd.setUint16(4, 20, true);
+    cd.setUint16(6, 20, true);
+    cd.setUint16(8, 0, true);
+    cd.setUint16(10, 0, true);
+    cd.setUint16(12, 0, true);
+    cd.setUint16(14, 0, true);
+    cd.setUint32(16, crc, true);
+    cd.setUint32(20, size, true);
+    cd.setUint32(24, size, true);
+    cd.setUint16(28, nameBytes.length, true);
+    cd.setUint16(30, 0, true);
+    cd.setUint16(32, 0, true);
+    cd.setUint16(34, 0, true);
+    cd.setUint16(36, 0, true);
+    cd.setUint32(38, 0, true);
+    cd.setUint32(42, offset, true);
+    central.push(new Uint8Array(cd.buffer), nameBytes);
+    offset += 30 + nameBytes.length + size;
+  }
+  const cdStart = offset;
+  let cdSize = 0;
+  for (const p of central) cdSize += p.length;
+  // end of central directory (22 bytes)
+  const eocd = new DataView(new ArrayBuffer(22));
+  eocd.setUint32(0, 0x06054b50, true);
+  eocd.setUint16(4, 0, true);
+  eocd.setUint16(6, 0, true);
+  eocd.setUint16(8, files.length, true);
+  eocd.setUint16(10, files.length, true);
+  eocd.setUint32(12, cdSize, true);
+  eocd.setUint32(16, cdStart, true);
+  eocd.setUint16(20, 0, true);
+  return new Blob([...localParts, ...central, new Uint8Array(eocd.buffer)], { type: "application/zip" });
 }
 
 // ────────────────────── 导出页 ──────────────────────
@@ -5147,16 +5247,25 @@ function _renderExportDocTree(doc, palette) {
 // 导出页「下载 .md」
 async function downloadFromExportPage() {
   try {
+    const stamp = _formatStamp(new Date());
     if (exportState.scope === "current") {
       if (!state.pdf) return;
       const md = generateCurrentPdfMarkdown(exportState.group);
       const base = _safeFileName(state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || t("exportNoteFallback"));
-      _downloadBlob(md, `${base}-${_formatStamp(new Date())}.md`);
+      _downloadBlob(md, `${base}-${stamp}.md`);
     } else {
+      // 整个主题：每篇论文一个独立 .md，打包成 zip 给用户
       const topic = state.topics[exportState.topicId];
       if (!topic) return;
-      const md = await generateMarkdownExport(exportState.topicId, exportState.group);
-      _downloadBlob(md, `${_safeFileName(topic.name)}-${_formatStamp(new Date())}.md`);
+      const files = await generateTopicMarkdownFiles(exportState.topicId, exportState.group);
+      if (files.length === 0) return;
+      if (files.length === 1) {
+        // 只有一篇 → 直接给 .md，不用 zip 兜个空壳
+        _downloadBlob(files[0].text, files[0].name);
+      } else {
+        const zipBlob = _makeZipBlob(files);
+        _triggerDownload(zipBlob, `${_safeFileName(topic.name)}-${stamp}.zip`);
+      }
     }
   } catch (e) {
     console.error("[downloadFromExportPage]", e);
