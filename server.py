@@ -116,21 +116,31 @@ async def event(req: Request):
 
 @app.get("/api/fetch-pdf")
 async def fetch_pdf(url: str):
-    """前端跨域无法直接拉 arxiv PDF —— 由后端代理"""
-    # arxiv abs 链接自动转 pdf
-    if "arxiv.org/abs/" in url:
-        url = url.replace("/abs/", "/pdf/")
-        if not url.endswith(".pdf"):
-            url += ".pdf"
+    """前端跨域无法直接拉 arxiv PDF —— 由后端代理。
+    arxiv 三种 URL 形态（/abs/、/html/、/pdf/）统一规整成 /pdf/{id}。"""
+    import re
+    m = re.search(r"arxiv\.org/(?:abs|html|pdf)/([0-9]{4}\.[0-9]{4,6})(v\d+)?", url)
+    if m:
+        url = f"https://arxiv.org/pdf/{m.group(1)}{m.group(2) or ''}.pdf"
     try:
         async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
             r = await client.get(url)
             r.raise_for_status()
+            # 内容校验：前 4 字节必须是 %PDF。否则前端拿到的会是 HTML，PDF.js 静默
+            # 失败、loading 一闪消失（半个月前能用现在不行的真凶就是这种"链接对了但
+            # 拿回 HTML"的情况）
+            if not r.content.startswith(b"%PDF"):
+                raise HTTPException(
+                    status_code=415,
+                    detail="这个链接拿回来的不是 PDF（可能是 arXiv HTML 渲染页或论文 landing 页）。请贴论文的直接 PDF 链接，或 arXiv 的 /abs/ 链接。",
+                )
             return StreamingResponse(
                 iter([r.content]),
                 media_type="application/pdf",
                 headers={"Content-Disposition": "inline"},
             )
+    except HTTPException:
+        raise  # 415 校验失败要原样透传，不能被下面的 502 包裹
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"PDF fetch failed: {e}")
 
