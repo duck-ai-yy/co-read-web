@@ -881,6 +881,16 @@ window.addEventListener("resize", () => {
   }
 });
 
+// arxiv 同一篇论文有 /abs/、/html/、/pdf/ 三种形态加可选版本号，全部归一到 arxiv:{id}。
+// 非 arxiv URL 保持原 url:{full} 形态。改动这个就 invalidate 所有按 pdfKey 索引的东西
+// （annotations / threads / topics.pdfKeys / EXAMPLE_PDF_KEY）—— 这是为什么 EXAMPLE_PDF_KEY
+// 仍然手写常量、不走 derivePdfKey。
+function derivePdfKey(url) {
+  const m = url.match(/arxiv\.org\/(?:abs|html|pdf)\/(\d{4}\.\d{4,6})(?:v\d+)?/i);
+  if (m) return `arxiv:${m[1]}`;
+  return `url:${url}`;
+}
+
 async function loadPdf({ url, file, topicId }) {
   resetReaderState();
   showLoadingMask(t("loadingFetchPdf"));
@@ -922,7 +932,7 @@ async function loadPdf({ url, file, topicId }) {
       const urlSrc = isHttp ? `/api/fetch-pdf?url=${encodeURIComponent(url)}` : url;
       docSrc = { url: urlSrc, ...PDFJS_DOC_OPTS };
       title = deriveTitleFromUrl(url);
-      pdfKey = `url:${url}`;
+      pdfKey = derivePdfKey(url);
     }
     state.pdf = await pdfjsLib.getDocument(docSrc).promise;
     state.totalPages = state.pdf.numPages;
@@ -962,7 +972,9 @@ async function loadPdf({ url, file, topicId }) {
 
     // v2-a：异步加载已保存的 annotation。pagerendered 时会按需 render
     // 用 .catch 不阻塞主流程（IndexedDB 不可用时已在内部降级到内存）
-    loadAnnotations(pdfKey).then(async (list) => {
+    // hydratePromise: 让下面的 maybePrimeSummary 等 hydrate 完了再判断"是否已总结过"，
+    // 否则同一篇论文每次打开都会重新发一次 LLM 请求（main thread 还没 hydrate → 检测失败）
+    const hydratePromise = loadAnnotations(pdfKey).then(async (list) => {
       // v3-α: 内存层兜底——若加载到的 ann 没 topicId（migration 还没跑或失败），补上 "default"
       // 这是双保险：autoMigrateAnnotationsToDefault 是 IDB 层迁移，这里只在内存里补
       state.annotations = (list || []).map((ann) =>
@@ -1016,6 +1028,9 @@ async function loadPdf({ url, file, topicId }) {
     });
     hideLoadingMask();
     // v6：自动核心总结进「全文 comment」(main)
+    // 必须等 hydratePromise —— 否则 main thread 历史 messages 还没灌进来，
+    // maybePrimeSummary 的"已总结过"检测会失败 → 每次重开都重发 LLM 请求浪费 token
+    await hydratePromise.catch(() => {});
     maybePrimeSummary();
   } catch (e) {
     console.error("[loadPdf]", e);
