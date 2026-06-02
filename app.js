@@ -168,7 +168,7 @@ const I18N = {
     // 导出页
     exportBackAria: "返回",
     exportTitle: "导出笔记",
-    exportDownload: "下载 .md",
+    exportDownload: "下载笔记",
     exportScopeLabel: "范围",
     exportScopeCurrent: "当前篇",
     exportScopeTopic: "整个主题",
@@ -358,7 +358,7 @@ const I18N = {
     unknownPdfKey: (k) => `Unknown PDF key format: ${k}`,
     exportBackAria: "Back",
     exportTitle: "Export note",
-    exportDownload: "Download .md",
+    exportDownload: "Download notes",
     exportScopeLabel: "Scope",
     exportScopeCurrent: "Current paper",
     exportScopeTopic: "Whole topic",
@@ -4780,18 +4780,20 @@ function _downloadBlob(text, fname) {
 }
 
 function _triggerDownload(blob, fname) {
-  let url = null;
-  try {
-    url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fname;
-    document.body.appendChild(a);
-    a.click();
+  // Chrome race: a.click() 是同步的，但下载子系统异步读 a.download 属性；
+  // 如果立刻 a.remove()，等 Chrome 读时元素已不在 DOM → 回退到 blob URL
+  // 的 UUID 当文件名。把 remove + revoke 一起推迟，给浏览器读取属性的窗口。
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fname;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
     a.remove();
-  } finally {
-    if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
+    URL.revokeObjectURL(url);
+  }, 1500);
 }
 
 // 零依赖 ZIP（store mode，不压缩）—— 避免再引外部 CDN lib。
