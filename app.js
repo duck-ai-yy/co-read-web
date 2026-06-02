@@ -936,8 +936,13 @@ async function loadPdf({ url, file, topicId }) {
     }
     state.pdf = await pdfjsLib.getDocument(docSrc).promise;
     state.totalPages = state.pdf.numPages;
-    state.pdfTitle = title;
     state.pdfKey = pdfKey;
+    // PDF 内嵌 metadata：title / author / subject / keywords。
+    // 论文 PDF 99% 嵌了 Title，比从 URL 末段 "2412.13678" 强得多；同时喂给 cite
+    // 兜底（cite 流程 step 2 就是用 state.pdfTitle 当 fallback），无需改 cite 逻辑。
+    state.pdfMeta = await extractPdfBuiltinMeta(state.pdf);
+    if (state.pdfMeta.title) title = state.pdfMeta.title;
+    state.pdfTitle = title;
 
     // 埋点：只发页数 + 来源类型，不发 URL / 文件名 / 任何内容
     track("pdf_loaded", {
@@ -1055,6 +1060,23 @@ function showLoadingMask(text) {
 }
 function hideLoadingMask() {
   els.loadingMask.hidden = true;
+}
+
+// PDF 内嵌 metadata 抽取（PDF.js 自带能力，0 额外网络请求）
+// 大部分学术 PDF 嵌了 Title/Author/Subject/Keywords。这里宽容失败：拿不到就空对象。
+async function extractPdfBuiltinMeta(pdf) {
+  try {
+    const m = await pdf.getMetadata();
+    const info = (m && m.info) || {};
+    return {
+      title: (info.Title || "").trim(),
+      author: (info.Author || "").trim(),
+      subject: (info.Subject || "").trim(),
+      keywords: (info.Keywords || "").trim(),
+    };
+  } catch {
+    return {};
+  }
 }
 
 function deriveTitleFromUrl(url) {
@@ -4099,6 +4121,11 @@ function formatRelativeTime(iso) {
 // 从 pdfKey 反推可读标题（file:foo.pdf:123 / url:https://... → 截尾）
 function deriveTitleFromPdfKey(pdfKey, fallback = "") {
   if (!pdfKey) return fallback || t("unnamedPdf");
+  // 优先用任一 topic 持久化的真实 title（来自 PDF metadata）
+  for (const tid in state.topics) {
+    const stored = state.topics[tid]?.pdfTitles?.[pdfKey];
+    if (stored) return stored;
+  }
   if (pdfKey.startsWith("file:")) {
     // file:NAME:SIZE → 取中间的 NAME
     const rest = pdfKey.slice(5);
@@ -4555,11 +4582,22 @@ async function deleteTopic(id) {
 
 // 把 pdfKey 加进 topic.pdfKeys（去重 push）+ 持久化
 // 同一 pdfKey 已在 topic.pdfKeys 里 → no-op（让用户重复点同一论文不会污染列表）
-async function addPdfToTopic(topicId, pdfKey, _title) {
+async function addPdfToTopic(topicId, pdfKey, title) {
   const topic = state.topics[topicId];
   if (!topic || !pdfKey) return;
   if (!topic.pdfKeys) topic.pdfKeys = [];
-  if (topic.pdfKeys.includes(pdfKey)) return;
+  if (!topic.pdfTitles) topic.pdfTitles = {};
+  // 持久化真实 title（来自 PDF metadata 或 derive）。重开论文时导出能用，
+  // 而不是回退到 derive 出来的 arxiv ID。已有更好 title 时不覆盖。
+  if (title && !topic.pdfTitles[pdfKey]) topic.pdfTitles[pdfKey] = title;
+  if (topic.pdfKeys.includes(pdfKey)) {
+    if (title && topic.pdfTitles[pdfKey] !== title) {
+      // 二次打开：用更新的 title（PDF metadata 可能这次才抓到）
+      topic.pdfTitles[pdfKey] = title;
+      await saveTopic(topic);
+    }
+    return;
+  }
   topic.pdfKeys.push(pdfKey);
   await saveTopic(topic);
 }
@@ -4729,6 +4767,7 @@ async function generateTopicMarkdownFiles(topicId, groupMode = "tag") {
   const files = [];
   const seen = new Map();  // 文件名去重（同名加 -2 / -3 后缀）
   for (const pdfKey of pdfKeys) {
+    // deriveTitleFromPdfKey 内部已优先查 topic.pdfTitles
     const title = deriveTitleFromPdfKey(pdfKey);
     let anns, getThread;
     if (pdfKey === state.pdfKey) {
@@ -4780,9 +4819,10 @@ function _downloadBlob(text, fname) {
 }
 
 function _triggerDownload(blob, fname) {
-  // Chrome race: a.click() 是同步的，但下载子系统异步读 a.download 属性；
-  // 如果立刻 a.remove()，等 Chrome 读时元素已不在 DOM → 回退到 blob URL
-  // 的 UUID 当文件名。把 remove + revoke 一起推迟，给浏览器读取属性的窗口。
+  // a[download] 法：Chrome 的下载子系统异步读 a.download；立刻 a.remove() 会让
+  // 它回退到 UUID。setTimeout 给浏览器读属性的窗口。
+  // 注意：showSaveFilePicker 路径在 downloadFromExportPage 顶层处理（必须在用户
+  // 手势同步链内才有效），这里只承担 fallback 职责。
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -5246,28 +5286,66 @@ function _renderExportDocTree(doc, palette) {
   return frag;
 }
 
-// 导出页「下载 .md」
+// 导出页「下载笔记」
+// 流程：先弹 showSaveFilePicker（必须在用户手势同步链内 → 抢在 await 之前），
+// 用户选好位置 → 后台生成数据 → 写入。这样既不丢用户手势，又避免被下载扩展拦截。
 async function downloadFromExportPage() {
   try {
     const stamp = _formatStamp(new Date());
-    if (exportState.scope === "current") {
-      if (!state.pdf) return;
-      const md = generateCurrentPdfMarkdown(exportState.group);
-      const base = _safeFileName(state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || t("exportNoteFallback"));
-      _downloadBlob(md, `${base}-${stamp}.md`);
-    } else {
-      // 整个主题：每篇论文一个独立 .md，打包成 zip 给用户
-      const topic = state.topics[exportState.topicId];
-      if (!topic) return;
+    const isTopic = exportState.scope === "topic";
+    if (!isTopic && !state.pdf) return;
+    const topic = isTopic ? state.topics[exportState.topicId] : null;
+    if (isTopic && !topic) return;
+
+    // 先估算文件名 / 后缀（不依赖后续异步生成）
+    const baseName = isTopic
+      ? _safeFileName(topic.name)
+      : _safeFileName(state.pdfTitle || deriveTitleFromPdfKey(state.pdfKey) || t("exportNoteFallback"));
+    // topic 多于 1 篇 → .zip；否则 .md
+    const probableExt = isTopic && (topic.pdfKeys || []).length > 1 ? ".zip" : ".md";
+    const suggestedName = `${baseName}-${stamp}${probableExt}`;
+
+    // 步骤 1：抢在 await 前弹 picker（保留用户手势）
+    let handle = null;
+    if (window.showSaveFilePicker) {
+      const mime = probableExt === ".zip" ? "application/zip" : "text/markdown";
+      try {
+        handle = await window.showSaveFilePicker({
+          suggestedName,
+          types: [{ description: probableExt === ".zip" ? "ZIP archive" : "Markdown", accept: { [mime]: [probableExt] } }],
+        });
+      } catch (e) {
+        if (e.name === "AbortError") return;  // 用户取消
+        console.warn("[showSaveFilePicker] fallback to anchor:", e);
+        // 不支持 / NotAllowed → handle 保持 null 走 a.click fallback
+      }
+    }
+
+    // 步骤 2：生成数据
+    let blob, fallbackFname;
+    if (isTopic) {
       const files = await generateTopicMarkdownFiles(exportState.topicId, exportState.group);
       if (files.length === 0) return;
       if (files.length === 1) {
-        // 只有一篇 → 直接给 .md，不用 zip 兜个空壳
-        _downloadBlob(files[0].text, files[0].name);
+        blob = new Blob([files[0].text], { type: "text/markdown;charset=utf-8" });
+        fallbackFname = files[0].name;
       } else {
-        const zipBlob = _makeZipBlob(files);
-        _triggerDownload(zipBlob, `${_safeFileName(topic.name)}-${stamp}.zip`);
+        blob = _makeZipBlob(files);
+        fallbackFname = suggestedName;
       }
+    } else {
+      const md = generateCurrentPdfMarkdown(exportState.group);
+      blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      fallbackFname = suggestedName;
+    }
+
+    // 步骤 3：写入
+    if (handle) {
+      const w = await handle.createWritable();
+      await w.write(blob);
+      await w.close();
+    } else {
+      _triggerDownload(blob, fallbackFname);
     }
   } catch (e) {
     console.error("[downloadFromExportPage]", e);

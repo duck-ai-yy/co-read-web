@@ -1237,11 +1237,12 @@ html, body {
   max-width: 820px;
   width: 100%;
   margin: 0 auto;
-  padding: 32px 32px 80px;
+  padding: 32px;
   display: flex;
   flex-direction: column;
   gap: 18px;
-  min-height: 100vh;
+  height: 100vh;       /* 改 min-height → 固定 height，让内部 list 滚动而不是整页滚 */
+  box-sizing: border-box;
 }
 .topic-page-header {
   display: flex;
@@ -1319,6 +1320,10 @@ html, body {
   flex-direction: column;
   gap: 8px;
   margin-top: 8px;
+  flex: 1;             /* 占满剩余空间，footer 自然贴底 */
+  overflow-y: auto;    /* 文件多时内部滚动，外层 footer 不随之消失 */
+  min-height: 0;       /* flex 子项需要这个才让 overflow 生效 */
+  padding-right: 4px;
 }
 .tp-pdf-empty {
   padding: 32px 16px;
@@ -1373,11 +1378,12 @@ html, body {
 .tp-pdf-item .tp-pdf-remove:hover { background: #fdecea; color: var(--err); }
 
 .tp-footer {
-  margin-top: 32px;
-  padding-top: 20px;
+  margin-top: 8px;
+  padding-top: 16px;
   border-top: 1px solid var(--line);
   display: flex;
   justify-content: center;
+  flex-shrink: 0;       /* 列表满了时也不被挤压 */
 }
 
 .reader-topic-hint {
