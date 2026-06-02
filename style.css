@@ -98,12 +98,20 @@ html, body {
   transition: border-color 0.12s, background 0.12s;
 }
 .home-manage:hover { border-color: var(--ink); background: var(--surface-hover, rgba(0,0,0,0.03)); }
-/* 首页右上角"我"按钮：个人偏好入口，全局 AI 指令的归宿 */
+/* 首页底部按钮组：「我」+「我的主题」并排 */
+.home-actions {
+  margin-top: 28px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
+}
+.home-actions .home-manage { margin-top: 0; }
+/* 「我」按钮：个人偏好入口，视觉重量略低于「我的主题」 */
 .home-me-btn {
-  position: absolute;
-  top: 20px;
-  right: 24px;
-  padding: 5px 14px;
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 16px;
   font-size: 13px;
   font-family: inherit;
   color: var(--ink-soft);

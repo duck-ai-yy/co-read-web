@@ -61,6 +61,7 @@ const I18N = {
     homeHintPrefix: "支持 arXiv 链接 / PDF URL / ",
     fileLinkLabel: "本地 PDF",
     homeManage: "我的主题 →",
+    homeMe: "我的偏好",
     recentHead: "最近在读",
     exampleBadge: "示例",
     // 主题列表
@@ -258,6 +259,7 @@ const I18N = {
     homeHintPrefix: "Supports arXiv link / PDF URL / ",
     fileLinkLabel: "local PDF",
     homeManage: "My topics →",
+    homeMe: "My preferences",
     recentHead: "Recently reading",
     exampleBadge: "Example",
     topicListBack: "← Home",
@@ -714,6 +716,7 @@ function applyStaticI18n() {
     if (fl) fl.firstChild && (fl.firstChild.textContent = t("fileLinkLabel"));
   }
   setText("#homeManageBtn", t("homeManage"));
+  setText("#homeMeBtn", t("homeMe"));
   // 主题列表
   setText("#topicListBack", t("topicListBack"));
   setText(".topics-header h1", t("topicsTitle"));

@@ -11,7 +11,6 @@
 <body>
   <!-- 首页：粘贴论文链接直接开始（极简入口；主题管理后置）-->
   <main id="home" class="view active">
-    <button id="homeMeBtn" type="button" class="home-me-btn" title="个人偏好（影响所有主题）">我</button>
     <div class="home-inner">
       <h1 class="home-brand">Co-Read</h1>
       <p class="tagline">粘贴论文链接，开始深度伴读。</p>
@@ -21,7 +20,10 @@
       </form>
       <p class="hint">支持 arXiv 链接 / PDF URL / <label class="file-link">本地 PDF<input type="file" id="homeFileInput" accept="application/pdf" hidden></label></p>
       <div id="homeRecent" class="home-recent"></div>
-      <button id="homeManageBtn" type="button" class="home-manage">我的主题 →</button>
+      <div class="home-actions">
+        <button id="homeMeBtn" type="button" class="home-me-btn" title="个人偏好（影响所有主题）">我的偏好</button>
+        <button id="homeManageBtn" type="button" class="home-manage">我的主题 →</button>
+      </div>
     </div>
     <div id="langSwitchHome" class="lang-switch" role="group" aria-label="语言 / Language">
       <button type="button" data-lang="zh">中文</button>
