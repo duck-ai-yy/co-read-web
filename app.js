@@ -6,15 +6,13 @@
  * v3 待加：sidebar 缩略图 + outline
  */
 
-import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.min.mjs";
-import * as pdfjsViewer from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf_viewer.mjs";
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.worker.min.mjs";
+// PDF.js 自托管：所有资源由本服务 /vendor/pdfjs/ 提供，消除 CDN 单点
+// （cdnjs/jsdelivr 任何一环抖动都会让 worker 加载失败 → getDocument 静默 reject）
+import * as pdfjsLib from "/vendor/pdfjs/build/pdf.min.mjs";
+import * as pdfjsViewer from "/vendor/pdfjs/web/pdf_viewer.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/build/pdf.worker.min.mjs";
 
-// PDF.js 加载复杂字体（CJK / 数学符号）选区映射 + 标准字体 fallback 的配置。
-// 注意：cdnjs 上 4.6.82 没有 cmaps/ 和 standard_fonts/ 目录（HEAD 403 死链），
-// 用 jsdelivr 上完整的 dist（带这俩文件夹）。
-const PDFJS_ASSET_BASE = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/";
+const PDFJS_ASSET_BASE = "/vendor/pdfjs/";
 const PDFJS_DOC_OPTS = {
   cMapUrl: PDFJS_ASSET_BASE + "cmaps/",
   cMapPacked: true,

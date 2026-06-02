@@ -7,6 +7,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 ROOT = Path(__file__).parent
@@ -39,6 +40,12 @@ SYSTEM_PROMPT = (ROOT / "system_prompt.md").read_text(encoding="utf-8")
 print(f"→ provider={provider}  model={MODEL}  endpoint={BASE_URL}")
 
 app = FastAPI()
+
+# PDF.js 资源自托管：消除 cdnjs / jsdelivr 的外部依赖
+# Why: 用户报告"半个月前能用、现在不行"+ loading 转一下消失。CDN 任何一环
+# 出问题（worker 加载、CORS、地区性访问）都会让 getDocument 静默失败。
+# 自托管后所有 PDF.js 资源同源，可以从 Network 面板一眼看出哪个挂了。
+app.mount("/vendor/pdfjs", StaticFiles(directory=ROOT / "vendor" / "pdfjs"), name="pdfjs")
 
 
 @app.post("/api/chat")
