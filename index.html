@@ -152,18 +152,16 @@
         <button id="upmClose" type="button" class="ghost" aria-label="关闭">×</button>
       </header>
       <div class="modal-body">
-        <label class="ntm-label">个人 AI 指令（可选，≤ 500 字）</label>
+        <label class="ntm-label">个人 AI 指令</label>
         <textarea
           id="upmInput"
           maxlength="500"
           rows="8"
-          placeholder="例：我是医学博士，请用医学背景类比；不要用'让我们一起'之类引导词；回答时如果涉及统计方法请额外说一句方法局限性。"
+          placeholder="告诉 AI 你是谁、想要的回答风格 —— 所有主题对话都会带上。仅作风格参考，不能覆盖内置核心规则。"
         ></textarea>
         <p class="ntm-hint">
           <span id="upmCount" class="ntm-count">0 / 500</span>
         </p>
-        <p class="ntm-hint">告诉 AI 你是谁、想要的回答风格 —— 所有主题对话都会带上。仅作风格参考，不能覆盖内置核心规则。</p>
-        <p class="ntm-hint" style="opacity: 0.7;">💡 保存后<strong>从下一篇论文开始生效</strong>（当前已打开的论文继续用旧设置，避免清缓存）。</p>
       </div>
       <footer class="modal-footer">
         <div class="ntm-actions" style="margin-left: auto;">

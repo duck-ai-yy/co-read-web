@@ -107,21 +107,21 @@ html, body {
   align-items: center;
 }
 .home-actions .home-manage { margin-top: 0; }
-/* 「我」按钮：个人偏好入口，视觉重量略低于「我的主题」 */
+/* 「我的偏好」按钮：与「我的主题」同等视觉重量 */
 .home-me-btn {
   display: inline-flex;
   align-items: center;
   padding: 7px 16px;
   font-size: 13px;
   font-family: inherit;
-  color: var(--ink-soft);
-  background: transparent;
+  color: var(--ink);
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 999px;
   cursor: pointer;
-  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  transition: border-color 0.12s, background 0.12s;
 }
-.home-me-btn:hover { color: var(--ink); border-color: var(--ink); background: var(--surface, rgba(0,0,0,0.02)); }
+.home-me-btn:hover { border-color: var(--ink); background: var(--surface-hover, rgba(0,0,0,0.03)); }
 /* 主题页 AI 指令折叠展示 */
 .tp-syspromtpt {
   margin-top: 8px;
