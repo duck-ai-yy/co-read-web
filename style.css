@@ -98,6 +98,77 @@ html, body {
   transition: border-color 0.12s, background 0.12s;
 }
 .home-manage:hover { border-color: var(--ink); background: var(--surface-hover, rgba(0,0,0,0.03)); }
+/* 首页右上角"我"按钮：个人偏好入口，全局 AI 指令的归宿 */
+.home-me-btn {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.home-me-btn:hover { color: var(--ink); border-color: var(--ink); background: var(--surface, rgba(0,0,0,0.02)); }
+/* 主题页 AI 指令折叠展示 */
+.tp-syspromtpt {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.tp-syspromtpt > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  user-select: none;
+}
+.tp-syspromtpt > summary::before { content: "🤖 "; }
+.tp-syspromtpt[open] > summary { background: var(--surface, rgba(0,0,0,0.02)); }
+.tp-syspromtpt-text {
+  margin: 8px 0 0;
+  padding: 10px 14px;
+  background: var(--surface, rgba(0,0,0,0.02));
+  border-left: 3px solid var(--line);
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+/* 主题创建 step 3 AI 指令 textarea + 个人偏好 modal */
+#ntmSysPromptInput, #upmInput {
+  width: 100%;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.ntm-count {
+  margin-left: auto;
+  float: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+.ntm-confirm-syspromtpt {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--surface, rgba(0,0,0,0.03));
+  border-left: 3px solid var(--line);
+  font-size: 13px;
+  white-space: pre-wrap;
+  color: var(--ink-soft);
+}
 /* 页脚版权 —— 沉到视口底部，安静低调，不跟主内容挤 */
 .home-copyright {
   position: absolute;
@@ -1480,6 +1551,8 @@ html, body {
 }
 .ntm-step { display: none; }
 .ntm-step.active { display: block; }
+#ntmStep4 .ntm-confirm-name,
+#ntmStep3 .ntm-confirm-name { display: block; }
 .ntm-label {
   display: block;
   font-size: 13px;

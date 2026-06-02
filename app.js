@@ -93,7 +93,7 @@ const I18N = {
     ntmAddRow: "+ 添加一行",
     ntmConfirmText: "即将创建主题：",
     ntmWarn: "⚠ 创建后 palette 不可改。确认创建？",
-    ntmStepIndicator: (s) => `第 ${s} / 3 步`,
+    ntmStepIndicator: (s) => `第 ${s} / 4 步`,
     ntmPrev: "← 上一步",
     ntmNext: "下一步 →",
     ntmConfirm: "确认创建",
@@ -287,7 +287,7 @@ const I18N = {
     ntmAddRow: "+ Add a row",
     ntmConfirmText: "About to create topic:",
     ntmWarn: "⚠ The palette cannot be changed after creation. Confirm?",
-    ntmStepIndicator: (s) => `Step ${s} / 3`,
+    ntmStepIndicator: (s) => `Step ${s} / 4`,
     ntmPrev: "← Back",
     ntmNext: "Next →",
     ntmConfirm: "Create",
@@ -484,6 +484,12 @@ const state = {
   streamError: null,
   // v6 Block 3：划线浮出 comment 框当前锚定的 comment id
   composeCommentId: null,
+  // v7 prompt 三层注入：
+  // - userPrompt 是当前全局个人偏好（从 IDB 读 / 修改后写回）
+  // - activeUserPrompt 是加载论文时的 snapshot：整个论文 session 不变，
+  //   保证 LLM cache prefix 稳定（改 userPrompt 不会立刻让正在读的论文 miss）
+  userPrompt: "",
+  activeUserPrompt: "",
 };
 // 开发期方便 console 调试
 window.__coread = state;
@@ -602,15 +608,30 @@ const els = {
   ntmStep1: $("ntmStep1"),
   ntmStep2: $("ntmStep2"),
   ntmStep3: $("ntmStep3"),
+  ntmStep4: $("ntmStep4"),
   ntmNameInput: $("ntmNameInput"),
+  ntmSysPromptInput: $("ntmSysPromptInput"),
+  ntmSysPromptCount: $("ntmSysPromptCount"),
   ntmPaletteEditor: $("ntmPaletteEditor"),
   ntmAddRow: $("ntmAddRow"),
   ntmConfirmName: $("ntmConfirmName"),
   ntmConfirmPalette: $("ntmConfirmPalette"),
+  ntmConfirmSysPrompt: $("ntmConfirmSysPrompt"),
   ntmStepIndicator: $("ntmStepIndicator"),
   ntmPrev: $("ntmPrev"),
   ntmNext: $("ntmNext"),
   ntmConfirm: $("ntmConfirm"),
+  // v7 个人偏好 modal
+  userPromptModal: $("userPromptModal"),
+  upmInput: $("upmInput"),
+  upmCount: $("upmCount"),
+  upmSave: $("upmSave"),
+  upmCancel: $("upmCancel"),
+  upmClose: $("upmClose"),
+  homeMeBtn: $("homeMeBtn"),
+  // v7 主题页 AI 指令
+  tpSysPromptBlock: $("tpSysPromptBlock"),
+  tpSysPromptText: $("tpSysPromptText"),
   // v3-β topic card "..." menu
   topicCardMenu: $("topicCardMenu"),
   // v3-δ 导出笔记
@@ -943,6 +964,9 @@ async function loadPdf({ url, file, topicId }) {
     state.pdf = await pdfjsLib.getDocument(docSrc).promise;
     state.totalPages = state.pdf.numPages;
     state.pdfKey = pdfKey;
+    // Snapshot 当前 userPrompt 到本论文 session：之后 IDB 里 userPrompt 即使被改
+    // 也不影响这篇 —— 保 LLM cache prefix 稳定，下一篇打开才用新值
+    state.activeUserPrompt = state.userPrompt || "";
     // PDF 内嵌 metadata：title / author / subject / keywords。
     // 论文 PDF 99% 嵌了 Title，比从 URL 末段 "2412.13678" 强得多；同时喂给 cite
     // 兜底（cite 流程 step 2 就是用 state.pdfTitle 当 fallback），无需改 cite 逻辑。
@@ -2911,6 +2935,11 @@ const _bootstrapPromise = (async () => {
     // ensureDefaultTopic 已经把 default 写进 state.topics，但若 IDB 里有更"新"版本也要覆盖
     state.topics[t.id] = t;
   }
+  // v7: 加载用户全局 prompt（个人偏好）
+  try {
+    const up = await readMeta("userPrompt");
+    if (typeof up === "string") state.userPrompt = up;
+  } catch (_) {}
 })().catch((e) => console.warn("[bootstrap]", e));
 
 // ── 选区 → annotation ──
@@ -3797,7 +3826,12 @@ async function sendToComment(commentId, question, from) {
     const r = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: messagesForLLM, pdf_text: state.pdfText }),
+      body: JSON.stringify({
+        messages: messagesForLLM,
+        pdf_text: state.pdfText,
+        topic_prompt: state.topics[state.currentTopicId]?.systemPrompt || "",
+        user_prompt: state.activeUserPrompt || "",
+      }),
       signal: state.abortCtl.signal,
     });
     if (!r.ok) {
@@ -4346,6 +4380,17 @@ function hideTopicCardMenu() {
 // ── 主题页 ──
 function renderTopicPage(topic) {
   els.tpName.textContent = displayTopicName(topic);
+  // v7: AI 指令折叠展示（有才显示）
+  if (els.tpSysPromptBlock && els.tpSysPromptText) {
+    const sp = (topic.systemPrompt || "").trim();
+    if (sp) {
+      els.tpSysPromptText.textContent = sp;
+      els.tpSysPromptBlock.hidden = false;
+      els.tpSysPromptBlock.open = false;  // 默认折叠
+    } else {
+      els.tpSysPromptBlock.hidden = true;
+    }
+  }
   // palette 行（只读小标签）
   els.tpPaletteRow.replaceChildren();
   for (const p of (topic.palette || [])) {
@@ -4601,19 +4646,19 @@ function _uuid() {
 
 // 创建主题：写 IDB + 内存 + 切到新主题页
 // id 可选：首次使用流程传 DEFAULT_TOPIC_ID，让"第一个主题"就是默认主题；否则生成 uuid
-async function createTopic({ name, palette, id }) {
+async function createTopic({ name, palette, systemPrompt, id }) {
   const tid = id || _uuid();
   const now = new Date().toISOString();
   const topic = {
     id: tid,
     name: (name || "").trim() || t("unnamedTopic"),
-    // 深拷贝 palette（防 modal 编辑器后续 mutate）
     palette: (palette || []).map((p) => ({ ...p })),
     pdfKeys: [],
     createdAt: now,
-    // v3-fixup-2: palette 创建即冻结，记录冻结时间戳（修 A2 long-term issue）
-    // 老主题（v3-α/β 创建无此字段）保持 undefined，不主动 migrate（避免 IDB 写风暴）
     paletteFrozenAt: now,
+    // v7: 主题级 AI 指令，跟 palette 一样创建后冻结（保 cache 稳定 + 防认知漂移）
+    systemPrompt: (systemPrompt || "").trim().slice(0, 500),
+    systemPromptFrozenAt: now,
   };
   state.topics[tid] = topic;
   await saveTopic(topic);
@@ -5483,11 +5528,13 @@ const ntmDraft = {
   step: 1,
   name: "",
   paletteDraft: [],
+  systemPrompt: "",
 };
 
 function openNewTopicModal() {
   ntmDraft.step = 1;
   ntmDraft.name = "";
+  ntmDraft.systemPrompt = "";
   // 用 DEFAULT_PALETTE 深拷贝（包含 emoji，但用户不能改 emoji）
   // i18n：默认 label / aiHint 按当前语言写入草稿（用户随后可改 → 变成用户数据）
   ntmDraft.paletteDraft = DEFAULT_PALETTE.map((p) => ({
@@ -5498,6 +5545,7 @@ function openNewTopicModal() {
       : {}),
   }));
   els.ntmNameInput.value = "";
+  if (els.ntmSysPromptInput) els.ntmSysPromptInput.value = "";
   els.newTopicModal.hidden = false;
   ntmRenderStep();
   setTimeout(() => els.ntmNameInput.focus(), 50);
@@ -5516,20 +5564,32 @@ function ntmRenderStep() {
   els.ntmStep1.classList.toggle("active", ntmDraft.step === 1);
   els.ntmStep2.classList.toggle("active", ntmDraft.step === 2);
   els.ntmStep3.classList.toggle("active", ntmDraft.step === 3);
+  if (els.ntmStep4) els.ntmStep4.classList.toggle("active", ntmDraft.step === 4);
   els.ntmStepIndicator.textContent = t("ntmStepIndicator", ntmDraft.step);
 
   // 按钮显示
   els.ntmPrev.hidden = ntmDraft.step === 1;
-  els.ntmNext.hidden = ntmDraft.step === 3;
-  els.ntmConfirm.hidden = ntmDraft.step !== 3;
+  els.ntmNext.hidden = ntmDraft.step === 4;
+  els.ntmConfirm.hidden = ntmDraft.step !== 4;
 
   // Step-specific 渲染
   if (ntmDraft.step === 2) {
     ntmRenderPaletteEditor();
   } else if (ntmDraft.step === 3) {
+    // sync textarea ↔ draft
+    if (els.ntmSysPromptInput) {
+      els.ntmSysPromptInput.value = ntmDraft.systemPrompt || "";
+      _updateSysPromptCount();
+    }
+  } else if (ntmDraft.step === 4) {
     ntmRenderConfirm();
   }
   ntmUpdateNextEnabled();
+}
+
+function _updateSysPromptCount() {
+  if (!els.ntmSysPromptCount || !els.ntmSysPromptInput) return;
+  els.ntmSysPromptCount.textContent = `${els.ntmSysPromptInput.value.length} / 500`;
 }
 
 function ntmUpdateNextEnabled() {
@@ -5540,6 +5600,9 @@ function ntmUpdateNextEnabled() {
     const valid = ntmDraft.paletteDraft.length >= MIN_PALETTE_ROWS &&
       ntmDraft.paletteDraft.every((p) => p.label && p.label.trim());
     els.ntmNext.disabled = !valid;
+  } else if (ntmDraft.step === 3) {
+    // AI 指令是可选的，永远允许下一步
+    els.ntmNext.disabled = false;
   }
 }
 
@@ -5631,6 +5694,17 @@ function ntmRenderConfirm() {
     row.appendChild(lb);
     els.ntmConfirmPalette.appendChild(row);
   }
+  // 显示 AI 指令预览（如有）
+  if (els.ntmConfirmSysPrompt) {
+    const sp = (ntmDraft.systemPrompt || "").trim();
+    if (sp) {
+      els.ntmConfirmSysPrompt.textContent = `🤖 AI 指令：${sp}`;
+      els.ntmConfirmSysPrompt.hidden = false;
+    } else {
+      els.ntmConfirmSysPrompt.textContent = "";
+      els.ntmConfirmSysPrompt.hidden = true;
+    }
+  }
 }
 
 async function ntmDoCreate() {
@@ -5641,12 +5715,15 @@ async function ntmDoCreate() {
   if (!palette.length || palette.some((p) => !p.label || !p.label.trim())) {
     ntmDraft.step = 2; ntmRenderStep(); return;
   }
+  const systemPrompt = (ntmDraft.systemPrompt || "").trim();
   // 首次使用：这一个主题就是「默认主题」(id=default)，让首页粘链接等照常落到 default
   const firstRun = _isFirstRun && !state.topics[DEFAULT_TOPIC_ID];
   els.ntmConfirm.disabled = true;
   try {
     const topic = await createTopic(
-      firstRun ? { name, palette, id: DEFAULT_TOPIC_ID } : { name, palette }
+      firstRun
+        ? { name, palette, systemPrompt, id: DEFAULT_TOPIC_ID }
+        : { name, palette, systemPrompt }
     );
     // 埋点：纯行为信号，不发主题名 / palette 内容
     track("topic_created");
@@ -6335,13 +6412,22 @@ els.ntmNext.addEventListener("click", () => {
     if (!ntmDraft.name) return;
     ntmDraft.step = 2;
   } else if (ntmDraft.step === 2) {
-    // 验证：每行 label 非空 + 至少 1 行
     if (ntmDraft.paletteDraft.length < MIN_PALETTE_ROWS) return;
     if (ntmDraft.paletteDraft.some((p) => !p.label || !p.label.trim())) return;
     ntmDraft.step = 3;
+  } else if (ntmDraft.step === 3) {
+    // AI 指令是可选的，sync draft 后下一步
+    ntmDraft.systemPrompt = (els.ntmSysPromptInput?.value || "").trim();
+    ntmDraft.step = 4;
   }
   ntmRenderStep();
 });
+if (els.ntmSysPromptInput) {
+  els.ntmSysPromptInput.addEventListener("input", () => {
+    ntmDraft.systemPrompt = els.ntmSysPromptInput.value;
+    _updateSysPromptCount();
+  });
+}
 els.ntmPrev.addEventListener("click", () => {
   if (ntmDraft.step > 1) ntmDraft.step -= 1;
   ntmRenderStep();
@@ -6349,9 +6435,38 @@ els.ntmPrev.addEventListener("click", () => {
 els.ntmAddRow.addEventListener("click", ntmAddPaletteRow);
 els.ntmConfirm.addEventListener("click", ntmDoCreate);
 
+// v7 个人偏好 modal
+function openUserPromptModal() {
+  if (!els.userPromptModal) return;
+  els.upmInput.value = state.userPrompt || "";
+  _updateUpmCount();
+  els.userPromptModal.hidden = false;
+  setTimeout(() => els.upmInput.focus(), 50);
+}
+function closeUserPromptModal() {
+  if (els.userPromptModal) els.userPromptModal.hidden = true;
+}
+function _updateUpmCount() {
+  if (!els.upmCount || !els.upmInput) return;
+  els.upmCount.textContent = `${els.upmInput.value.length} / 500`;
+}
+async function saveUserPrompt() {
+  const v = (els.upmInput.value || "").trim().slice(0, 500);
+  state.userPrompt = v;
+  try { await writeMeta("userPrompt", v); } catch (e) { console.warn("[saveUserPrompt]", e); }
+  closeUserPromptModal();
+  // 注意：故意不更新 state.activeUserPrompt —— 已打开论文继续用旧值，保 cache 命中
+}
+if (els.homeMeBtn) els.homeMeBtn.addEventListener("click", openUserPromptModal);
+if (els.upmClose) els.upmClose.addEventListener("click", closeUserPromptModal);
+if (els.upmCancel) els.upmCancel.addEventListener("click", closeUserPromptModal);
+if (els.upmSave) els.upmSave.addEventListener("click", saveUserPrompt);
+if (els.upmInput) els.upmInput.addEventListener("input", _updateUpmCount);
+
 // ESC 关 modal / "..." 菜单
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  if (els.userPromptModal && !els.userPromptModal.hidden) { closeUserPromptModal(); return; }
   if (!els.citeModal.hidden) { closeCiteModal(); return; }
   if (!els.newTopicModal.hidden) { closeNewTopicModal(); return; }
   if (!els.topicCardMenu.hidden) { hideTopicCardMenu(); return; }

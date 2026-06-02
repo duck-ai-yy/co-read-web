@@ -36,7 +36,13 @@ if not API_KEY:
     raise SystemExit(f"Missing {_key_var} in .env for provider '{provider}'")
 BASE_URL = os.environ.get("LLM_BASE_URL") or _url
 MODEL = os.environ.get("LLM_MODEL") or _model
-SYSTEM_PROMPT = (ROOT / "system_prompt.md").read_text(encoding="utf-8")
+# 三层 prompt 文件（启动时加载，热路径不再读盘）：
+# - core_rules.md: 我们的核心规则，最高优先级，注入到 [0] + PDF 全文
+# - topic_context.md: wrapper template，运行时把主题级 prompt 填进 {{content}}
+# - user_persona.md: wrapper template，运行时把个人偏好填进 {{content}}
+CORE_RULES = (ROOT / "prompts" / "core_rules.md").read_text(encoding="utf-8")
+TOPIC_TEMPLATE = (ROOT / "prompts" / "topic_context.md").read_text(encoding="utf-8")
+USER_TEMPLATE = (ROOT / "prompts" / "user_persona.md").read_text(encoding="utf-8")
 print(f"→ provider={provider}  model={MODEL}  endpoint={BASE_URL}")
 
 app = FastAPI()
@@ -50,20 +56,42 @@ app.mount("/vendor/pdfjs", StaticFiles(directory=ROOT / "vendor" / "pdfjs"), nam
 
 @app.post("/api/chat")
 async def chat(req: Request):
-    """流式代理到上游 OpenAI 兼容 LLM。前端发 {messages, pdf_text?}，
-    pdf_text 存在则注入到 system message。
-    若上游返回非 200，把错误体作为 HTTPException 抛出，前端能识别。"""
+    """流式代理到上游 OpenAI 兼容 LLM。前端发：
+    - messages: 对话历史 + 主题级 palette/annotation system messages
+    - pdf_text: 论文全文（注入到 core_rules 同条 system，cache prefix 锚点）
+    - topic_prompt: 主题创建时填的 AI 指令（冻结，保 cache 稳定）
+    - user_prompt: 个人偏好（snapshot 后整篇论文 session 不变）
+
+    注入顺序（基于 DeepSeek 早 token 权重更高 + cache 前缀必须一致）：
+      [0] core_rules + PDF（最大、最稳定 → cache 锚点）
+      [1] topic_context wrapper（可空 → 跳过）
+      [2] user_persona wrapper（可空 → 跳过）
+      [3..n] frontend messages（palette / annotation note / 对话历史）"""
     body = await req.json()
     messages = body.get("messages", [])
     pdf_text = body.get("pdf_text", "")
+    topic_prompt = (body.get("topic_prompt") or "").strip()
+    user_prompt = (body.get("user_prompt") or "").strip()
 
-    system_content = SYSTEM_PROMPT
+    system_messages = []
+    core_content = CORE_RULES
     if pdf_text:
-        system_content += f"\n\n## 当前论文全文\n\n{pdf_text}"
+        core_content += f"\n\n## 当前论文全文\n\n{pdf_text}"
+    system_messages.append({"role": "system", "content": core_content})
+    if topic_prompt:
+        system_messages.append({
+            "role": "system",
+            "content": TOPIC_TEMPLATE.replace("{{content}}", topic_prompt),
+        })
+    if user_prompt:
+        system_messages.append({
+            "role": "system",
+            "content": USER_TEMPLATE.replace("{{content}}", user_prompt),
+        })
 
     payload = {
         "model": MODEL,
-        "messages": [{"role": "system", "content": system_content}, *messages],
+        "messages": [*system_messages, *messages],
         "stream": True,
     }
 

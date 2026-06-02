@@ -11,6 +11,7 @@
 <body>
   <!-- 首页：粘贴论文链接直接开始（极简入口；主题管理后置）-->
   <main id="home" class="view active">
+    <button id="homeMeBtn" type="button" class="home-me-btn" title="个人偏好（影响所有主题）">我</button>
     <div class="home-inner">
       <h1 class="home-brand">Co-Read</h1>
       <p class="tagline">粘贴论文链接，开始深度伴读。</p>
@@ -53,6 +54,10 @@
         <div class="tp-title-block">
           <h2 id="tpName" class="tp-name"></h2>
           <div id="tpPaletteRow" class="tp-palette-row" title="主题创建后色板不可修改"></div>
+          <details id="tpSysPromptBlock" class="tp-syspromtpt" hidden>
+            <summary>本主题 AI 指令</summary>
+            <p id="tpSysPromptText" class="tp-syspromtpt-text"></p>
+          </details>
         </div>
       </header>
       <!-- 添加论文表单（复用 landing 的 loadForm 视觉）-->
@@ -102,20 +107,66 @@
           <div id="ntmPaletteEditor" class="ntm-palette-editor"></div>
           <button id="ntmAddRow" type="button" class="ghost-btn ntm-add-row">+ 添加一行</button>
         </section>
-        <!-- Step 3: 确认 -->
+        <!-- Step 3: AI 指令 -->
         <section id="ntmStep3" class="ntm-step">
+          <label class="ntm-label">本主题 AI 指令（可选，≤ 500 字）</label>
+          <textarea
+            id="ntmSysPromptInput"
+            maxlength="500"
+            rows="6"
+            placeholder="例：本主题关注 AI 安全里的 alignment / red-teaming 视角；论文里的实验结果请额外指出 sample size 和置信区间。"
+          ></textarea>
+          <p class="ntm-hint">
+            <strong class="ntm-hint-warn">⚠ 创建后冻结</strong>
+            <span id="ntmSysPromptCount" class="ntm-count">0 / 500</span>
+          </p>
+          <p class="ntm-hint">告诉 AI 本主题的研究背景 / 关注角度 / 想要的回答风格。仅作背景参考，无法覆盖内置核心规则。</p>
+        </section>
+        <!-- Step 4: 确认 -->
+        <section id="ntmStep4" class="ntm-step">
           <p class="ntm-confirm-text">即将创建主题：</p>
           <div id="ntmConfirmName" class="ntm-confirm-name"></div>
           <div id="ntmConfirmPalette" class="ntm-confirm-palette"></div>
-          <p class="ntm-warn">⚠ 创建后 palette 不可改。确认创建？</p>
+          <div id="ntmConfirmSysPrompt" class="ntm-confirm-syspromtpt"></div>
+          <p class="ntm-warn">⚠ 创建后 palette 和 AI 指令均不可改。确认创建？</p>
         </section>
       </div>
       <footer class="modal-footer">
-        <span id="ntmStepIndicator" class="ntm-step-indicator">第 1 / 3 步</span>
+        <span id="ntmStepIndicator" class="ntm-step-indicator">第 1 / 4 步</span>
         <div class="ntm-actions">
           <button id="ntmPrev" type="button" class="ghost-btn" hidden>← 上一步</button>
           <button id="ntmNext" type="button" class="primary-btn">下一步 →</button>
           <button id="ntmConfirm" type="button" class="primary-btn" hidden>确认创建</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- 个人偏好 modal：全局 AI 指令，所有主题/论文共用 -->
+  <div id="userPromptModal" class="modal-mask" hidden role="dialog" aria-modal="true" aria-labelledby="upmTitle">
+    <div class="modal">
+      <header class="modal-header">
+        <h3 id="upmTitle">个人偏好</h3>
+        <button id="upmClose" type="button" class="ghost" aria-label="关闭">×</button>
+      </header>
+      <div class="modal-body">
+        <label class="ntm-label">个人 AI 指令（可选，≤ 500 字）</label>
+        <textarea
+          id="upmInput"
+          maxlength="500"
+          rows="8"
+          placeholder="例：我是医学博士，请用医学背景类比；不要用'让我们一起'之类引导词；回答时如果涉及统计方法请额外说一句方法局限性。"
+        ></textarea>
+        <p class="ntm-hint">
+          <span id="upmCount" class="ntm-count">0 / 500</span>
+        </p>
+        <p class="ntm-hint">告诉 AI 你是谁、想要的回答风格 —— 所有主题对话都会带上。仅作风格参考，不能覆盖内置核心规则。</p>
+        <p class="ntm-hint" style="opacity: 0.7;">💡 保存后<strong>从下一篇论文开始生效</strong>（当前已打开的论文继续用旧设置，避免清缓存）。</p>
+      </div>
+      <footer class="modal-footer">
+        <div class="ntm-actions" style="margin-left: auto;">
+          <button id="upmCancel" type="button" class="ghost-btn">取消</button>
+          <button id="upmSave" type="button" class="primary-btn">保存</button>
         </div>
       </footer>
     </div>
