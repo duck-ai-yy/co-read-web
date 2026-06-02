@@ -56,9 +56,9 @@ const I18N = {
     docTitle: "Co-Read · 论文伴读",
     // 首页
     tagline: "粘贴论文链接，开始深度伴读。",
-    homeUrlPlaceholder: "arXiv 链接 / 直接 PDF URL →",
+    homeUrlPlaceholder: "arXiv 链接 / PDF URL →",
     homeSubmitAria: "开始伴读",
-    homeHintPrefix: "支持 arXiv 链接 / 直接 PDF URL / ",
+    homeHintPrefix: "支持 arXiv 链接 / PDF URL / ",
     fileLinkLabel: "本地 PDF",
     homeManage: "我的主题 →",
     recentHead: "最近在读",
@@ -73,7 +73,7 @@ const I18N = {
     tpPaletteTitle: "主题创建后色板不可修改",
     tpUrlPlaceholder: "粘贴论文链接，加入本主题 →",
     tpSubmitAria: "加入主题",
-    tpExportBtn: "[导出笔记]",
+    tpExportBtn: "导出笔记",
     tpExportTitle: "导出本主题为 markdown 笔记",
     tpExportEmptyTitle: "主题里还没有论文",
     tpPdfCount: (n) => `${n} 篇`,
@@ -253,9 +253,9 @@ const I18N = {
     htmlLang: "en",
     docTitle: "Co-Read · Paper Companion",
     tagline: "Paste a paper link to start deep reading.",
-    homeUrlPlaceholder: "arXiv link / direct PDF URL →",
+    homeUrlPlaceholder: "arXiv link / PDF URL →",
     homeSubmitAria: "Start reading",
-    homeHintPrefix: "Supports arXiv link / direct PDF URL / ",
+    homeHintPrefix: "Supports arXiv link / PDF URL / ",
     fileLinkLabel: "local PDF",
     homeManage: "My topics →",
     recentHead: "Recently reading",
@@ -268,7 +268,7 @@ const I18N = {
     tpPaletteTitle: "The palette cannot be changed after the topic is created",
     tpUrlPlaceholder: "Paste a paper link to add to this topic →",
     tpSubmitAria: "Add to topic",
-    tpExportBtn: "[Export note]",
+    tpExportBtn: "Export notes",
     tpExportTitle: "Export this topic as a markdown note",
     tpExportEmptyTitle: "No papers in this topic yet",
     tpPdfCount: (n) => `${n} paper${n === 1 ? "" : "s"}`,
@@ -886,6 +886,12 @@ window.addEventListener("resize", () => {
 // （annotations / threads / topics.pdfKeys / EXAMPLE_PDF_KEY）—— 这是为什么 EXAMPLE_PDF_KEY
 // 仍然手写常量、不走 derivePdfKey。
 function derivePdfKey(url) {
+  // 示例论文兼容：EXAMPLE_SEED 用旧 url: 形态 key 存了 annotations / threads /
+  // primeSummary，规整成 arxiv: 后老数据访问不到，"示例论文改没了"。这一篇
+  // 钉死在旧 key 上，不破坏 seed。等下次清理时一起迁移。
+  if (/arxiv\.org\/(?:abs|html|pdf)\/2412\.13678(?:v\d+)?/i.test(url)) {
+    return "url:https://arxiv.org/abs/2412.13678";
+  }
   const m = url.match(/arxiv\.org\/(?:abs|html|pdf)\/(\d{4}\.\d{4,6})(?:v\d+)?/i);
   if (m) return `arxiv:${m[1]}`;
   return `url:${url}`;
@@ -953,7 +959,7 @@ async function loadPdf({ url, file, topicId }) {
     // v3-β: 把当前 PDF 关联到 targetTopic（pdfKeys 去重 push + 更新 lastOpened 时间）
     // 同一 pdfKey 在多个主题间可共享引用（PM 拍板：annotations 按 topicId 区分）
     // 异步写 IDB，不阻塞渲染；失败已在 saveTopic 内部 catch
-    addPdfToTopic(state.currentTopicId, pdfKey, title).catch((e) =>
+    addPdfToTopic(state.currentTopicId, pdfKey, title, state.pdfMeta).catch((e) =>
       console.warn("[addPdfToTopic]", e)
     );
 
@@ -1417,9 +1423,14 @@ async function openCiteModal() {
   // 2. 无缓存：用标题兜底先填一个，再尝试抓取
   const arxivId = citeArxivIdFromKey(pdfKey);
   const doi = arxivId ? "" : citeDoiFromText(state.pdfText);
+  // PDF 内嵌 metadata 兜底 authors（"Smith, J.; Doe, A." 风格切分；arxiv PDF 常嵌）
+  const pdfMeta = state.pdfMeta || {};
+  const authorsFromPdf = pdfMeta.author
+    ? pdfMeta.author.split(/\s*[,;]\s*|\s+and\s+/i).map((s) => s.trim()).filter(Boolean)
+    : [];
   _citeMeta = {
-    title: state.pdfTitle && !/\.pdf$/i.test(state.pdfTitle) ? state.pdfTitle : "",
-    authors: [], year: "", venue: "", doi: doi, arxivId: arxivId,
+    title: state.pdfTitle && !/\.pdf$/i.test(state.pdfTitle) ? state.pdfTitle : (pdfMeta.title || ""),
+    authors: authorsFromPdf, year: "", venue: "", doi: doi, arxivId: arxivId,
   };
   citeFillInputs(_citeMeta);
   citeRenderOutput();
@@ -4338,6 +4349,9 @@ function openPdfFromTopic(topicId, pdfKey) {
   if (pdfKey.startsWith("url:")) {
     const url = pdfKey.slice(4);
     loadPdf({ url, topicId });
+  } else if (pdfKey.startsWith("arxiv:")) {
+    // 新 key 形态：arxiv:{id} → 用 abs URL 重新加载
+    loadPdf({ url: `https://arxiv.org/abs/${pdfKey.slice(6)}`, topicId });
   } else if (pdfKey.startsWith("file:")) {
     // 本地文件无法存进 IDB（File 对象不可序列化 + 隐私）
     // → 用户必须重新选；这里弹个友好提示
@@ -4582,24 +4596,23 @@ async function deleteTopic(id) {
 
 // 把 pdfKey 加进 topic.pdfKeys（去重 push）+ 持久化
 // 同一 pdfKey 已在 topic.pdfKeys 里 → no-op（让用户重复点同一论文不会污染列表）
-async function addPdfToTopic(topicId, pdfKey, title) {
+async function addPdfToTopic(topicId, pdfKey, title, meta) {
   const topic = state.topics[topicId];
   if (!topic || !pdfKey) return;
   if (!topic.pdfKeys) topic.pdfKeys = [];
   if (!topic.pdfTitles) topic.pdfTitles = {};
-  // 持久化真实 title（来自 PDF metadata 或 derive）。重开论文时导出能用，
-  // 而不是回退到 derive 出来的 arxiv ID。已有更好 title 时不覆盖。
-  if (title && !topic.pdfTitles[pdfKey]) topic.pdfTitles[pdfKey] = title;
-  if (topic.pdfKeys.includes(pdfKey)) {
-    if (title && topic.pdfTitles[pdfKey] !== title) {
-      // 二次打开：用更新的 title（PDF metadata 可能这次才抓到）
-      topic.pdfTitles[pdfKey] = title;
-      await saveTopic(topic);
-    }
-    return;
+  if (!topic.pdfMetas) topic.pdfMetas = {};
+  // 持久化 title + 4 字段 PDF metadata（title / author / subject / keywords）。
+  // 重开论文时无需重新抽 PDF，导出 / cite / 列表名都能用真实值。
+  let dirty = false;
+  if (title && topic.pdfTitles[pdfKey] !== title) { topic.pdfTitles[pdfKey] = title; dirty = true; }
+  if (meta && Object.values(meta).some(Boolean)) {
+    const prev = topic.pdfMetas[pdfKey] || {};
+    const merged = { ...prev, ...Object.fromEntries(Object.entries(meta).filter(([, v]) => v)) };
+    if (JSON.stringify(prev) !== JSON.stringify(merged)) { topic.pdfMetas[pdfKey] = merged; dirty = true; }
   }
-  topic.pdfKeys.push(pdfKey);
-  await saveTopic(topic);
+  if (!topic.pdfKeys.includes(pdfKey)) { topic.pdfKeys.push(pdfKey); dirty = true; }
+  if (dirty) await saveTopic(topic);
 }
 
 // 从主题里移除 pdfKey（不删 IDB 里的 annotation 数据，只切断 topic 的引用）
@@ -4701,11 +4714,18 @@ function _exportCommentLines(ann, getThread) {
   return out;
 }
 
-// 构建单篇 PDF 的笔记段落：全文导读 + 高亮 comment
+// 构建单篇 PDF 的笔记段落：[paper metadata] + 全文导读 + 高亮 comment
 //   anns: 该 PDF 的 annotation 数组；getThread(id) → thread；palette: 主题色板
 //   groupMode: "tag"（按标签归类）/ "reading"（按创建时间平铺）
-function buildPdfNoteSection(anns, getThread, palette, groupMode = "tag") {
+//   pdfMeta: PDF 内嵌 metadata { title, author, subject, keywords }（可选）
+function buildPdfNoteSection(anns, getThread, palette, groupMode = "tag", pdfMeta) {
   const lines = [];
+  // 0. PDF metadata 行（来自论文文件嵌入字段）
+  if (pdfMeta) {
+    if (pdfMeta.author) lines.push(`**作者**：${pdfMeta.author}`, "");
+    if (pdfMeta.subject) lines.push(`**主题**：${pdfMeta.subject}`, "");
+    if (pdfMeta.keywords) lines.push(`**关键词**：${pdfMeta.keywords}`, "");
+  }
   // 1. 全文导读（main comment）—— 有收入笔记的消息才出小节
   const mainMsgs = _exportMsgLines((getThread("main") || {}).messages);
   if (mainMsgs.length) lines.push(t("mdFulltext"), "", ...mainMsgs);
@@ -4791,7 +4811,8 @@ async function generateTopicMarkdownFiles(topicId, groupMode = "tag") {
     }
     const sub = `${t("mdSubTopicPrefix", displayTopicName(topic))}${t("mdSubGroupBody", subGroup)}`;
     const lines = _exportHeader(t("mdNoteTitle", title), sub, palette);
-    lines.push(...buildPdfNoteSection(anns, getThread, palette, groupMode));
+    const pdfMeta = (topic.pdfMetas || {})[pdfKey];
+    lines.push(...buildPdfNoteSection(anns, getThread, palette, groupMode, pdfMeta));
     const base = _safeFileName(title);
     const dupCount = seen.get(base) || 0;
     seen.set(base, dupCount + 1);
@@ -4809,7 +4830,7 @@ function generateCurrentPdfMarkdown(groupMode = "tag") {
   const subGroup = groupMode === "reading" ? t("mdGroupReading") : t("mdGroupTag");
   const sub = `${topic ? t("mdSubTopicPrefix", displayTopicName(topic)) : ""}${t("mdSubGroupBody", subGroup)}`;
   const lines = _exportHeader(t("mdNoteTitle", title), sub, palette);
-  lines.push(...buildPdfNoteSection(state.annotations, (id) => state.threads[id], palette, groupMode));
+  lines.push(...buildPdfNoteSection(state.annotations, (id) => state.threads[id], palette, groupMode, state.pdfMeta));
   return lines.join("\n");
 }
 
