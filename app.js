@@ -3963,17 +3963,35 @@ function renderAssistant(el, text) {
 //   - 仅作用于 assistant message（renderAssistant 的调用点），user 输入里偶然写 (p.5) 不受影响
 //   - 边缘：assistant 若用 markdown 链接 `[p.5](url)`，marked 会先转成 <a href="url">p.5</a>，
 //     此时 HTML 里不再有 `[p.5]` 字面量 → 容错正则不会命中 → 安全
-const CITE_REGEXES = [
-  /〔p\.?\s*(\d+)〕/g,    // 〔p.5〕 严格首选
+// 引用渲染：识别 〔p.N: "quote"〕 优先（quote 用于 PDF.js find 跳段落）；
+// 退化形态 〔p.N〕 / (p.N) / [p.N] 也匹配，保持向后兼容。
+// 注意：marked 转 HTML 后 " 变成 &quot;，所以正则匹配 &quot;
+const CITE_QUOTE_REGEXES = [
+  /〔p\.?\s*(\d+)[:：]\s*&quot;([^&]{1,200}?)&quot;〕/g,   // 〔p.5: "quote"〕 主格式
+  /〔p\.?\s*(\d+)[:：]\s*"([^"]{1,200}?)"〕/g,             // 极少数渲染器没转 " 时兜底
+];
+const CITE_PAGE_ONLY_REGEXES = [
+  /〔p\.?\s*(\d+)〕/g,    // 〔p.5〕 兼容老格式 / AI 没给 quote
   /（p\.?\s*(\d+)）/g,    // （p.5）全角圆括号
   /\(p\.?\s*(\d+)\)/g,    // (p.5) 半角圆括号
   /\[p\.?\s*(\d+)\]/g,    // [p.5] 方括号
 ];
+function _escAttr(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
 function postProcessCitations(html) {
   if (!html || typeof html !== "string") return html;
   let out = html;
-  for (const re of CITE_REGEXES) {
-    out = out.replace(re, (_match, n) => {
+  // 优先消化带 quote 的格式 → data-quote 属性，hover tooltip 显示 quote 给用户预览
+  for (const re of CITE_QUOTE_REGEXES) {
+    out = out.replace(re, (_m, n, quote) => {
+      const cleanQuote = quote.replace(/&amp;quot;/g, '"').trim();
+      return `<a class="cite-link" data-page="${n}" data-quote="${_escAttr(cleanQuote)}" title="${_escAttr(cleanQuote)}">〔p.${n}〕</a>`;
+    });
+  }
+  // 剩下的退化形态
+  for (const re of CITE_PAGE_ONLY_REGEXES) {
+    out = out.replace(re, (_m, n) => {
       return `<a class="cite-link" data-page="${n}" title="${t("citeJumpTitle", n)}">〔p.${n}〕</a>`;
     });
   }
@@ -5960,11 +5978,12 @@ els.commentList.addEventListener("click", (e) => {
     renderCommentList();
     return;
   }
-  // 引用回链 〔p.N〕→ 跳页 + flash（逻辑同旧 chatMessages 委托）
+  // 引用回链 〔p.N〕→ 跳页 + 段落定位（PDF.js find）
   const link = e.target.closest(".cite-link");
   if (link) {
     e.preventDefault();
     const pageNum = parseInt(link.dataset.page, 10);
+    const quote = link.dataset.quote || "";
     if (!pageNum || !state.pdf) return;
     if (pageNum < 1 || pageNum > state.totalPages) {
       console.debug("[cite-link] page out of range:", pageNum, "total=" + state.totalPages);
@@ -5980,7 +5999,23 @@ els.commentList.addEventListener("click", (e) => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => { els.viewerContainer.scrollLeft = prevScrollLeft; });
     });
-    flashPage(pageNum);
+    if (quote) {
+      // 段落级定位：dispatch find，PDF.js 自动滚到匹配 + 黄色高亮那一段
+      // 等 textLayer 渲染完再 find（短延迟，给 scrollPageIntoView 让页面渲染）
+      setTimeout(() => {
+        eventBus.dispatch("find", {
+          source: window,
+          type: "",
+          query: quote,
+          highlightAll: true,
+          findPrevious: false,
+          caseSensitive: false,
+        });
+      }, 200);
+    } else {
+      // 无 quote → 退化整页 flash
+      flashPage(pageNum);
+    }
     return;
   }
   // 点卡片头 → 展开 / 收起（点卡片体内不触发）
